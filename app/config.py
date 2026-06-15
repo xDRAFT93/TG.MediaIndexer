@@ -87,6 +87,8 @@ class Settings:
 
     # ---- UI / posting ----
     tg_message_limit: int = field(default_factory=lambda: _int("TG_MESSAGE_LIMIT", 3900))
+    # Telegram media captions are limited to 1024 UTF-16 units; keep a margin.
+    tg_caption_limit: int = field(default_factory=lambda: _int("TG_CAPTION_LIMIT", 1000))
     episodes_full_limit: int = field(default_factory=lambda: _int("EPISODES_FULL_LIMIT", 20))
     episodes_block_limit: int = field(default_factory=lambda: _int("EPISODES_BLOCK_LIMIT", 100))
     episodes_group_limit: int = field(default_factory=lambda: _int("EPISODES_GROUP_LIMIT", 1000))

@@ -271,7 +271,7 @@ def _clf(det: Detection) -> dict:
 # --------------------------------------------------------------------------- #
 async def update_worker(client) -> None:
     # Imported lazily to avoid a circular import at module load.
-    from ..ui.card import build_card
+    from ..ui.card import build_blocks
     from ..ui.post_manager import PostManager
 
     manager = PostManager()
@@ -282,8 +282,8 @@ async def update_worker(client) -> None:
             if media is None:
                 continue
             episodes = await EpisodeRepository.list_for_media(media_id)
-            full_text = build_card(media, episodes)
-            await manager.sync(client, media, full_text)
+            blocks = build_blocks(media, episodes)
+            await manager.sync(client, media, blocks)
             await MediaRepository.mark_clean(media_id)
         except Exception as exc:
             log.exception("update_worker failed for %s: %s", media_id, exc)

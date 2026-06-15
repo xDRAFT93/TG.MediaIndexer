@@ -296,6 +296,10 @@ class Post:
     state: str = PostState.CREATED.value
     content_hash: str = ""
     char_len: int = 0
+    # True when the root post is a real photo message (poster on top). Lets the
+    # post manager notice a text<->photo transition and rebuild cleanly, because
+    # Telegram does not allow editing a text message into a media message.
+    has_media: bool = False
     _id: str = field(default_factory=new_id)
     created_at: datetime = field(default_factory=now_utc)
     updated_at: datetime = field(default_factory=now_utc)
@@ -305,4 +309,6 @@ class Post:
 
     @classmethod
     def from_dict(cls, d: dict) -> "Post":
-        return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})  # type: ignore[attr-defined]
+        # Only pass keys that are present so dataclass defaults (e.g. has_media)
+        # apply to documents written before the field existed.
+        return cls(**{k: d[k] for k in cls.__dataclass_fields__ if k in d})  # type: ignore[attr-defined]
