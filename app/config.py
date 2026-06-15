@@ -93,6 +93,17 @@ class Settings:
     episodes_block_limit: int = field(default_factory=lambda: _int("EPISODES_BLOCK_LIMIT", 100))
     episodes_group_limit: int = field(default_factory=lambda: _int("EPISODES_GROUP_LIMIT", 1000))
 
+    # ---- Telegram outbound rate limiting (avoids FloodWaitError) ----
+    # Minimum gap between any two outgoing writes (send/edit/delete). Bulk card
+    # posting is paced to this so Telegram's flood limits are not tripped.
+    tg_min_send_interval: float = field(default_factory=lambda: _float("TG_MIN_SEND_INTERVAL", 2.0))
+    # Telethon waits out flood errors up to this many seconds transparently;
+    # longer waits are handled (and logged) by the send gate instead.
+    tg_flood_sleep_threshold: int = field(default_factory=lambda: _int("TG_FLOOD_SLEEP_THRESHOLD", 60))
+    # How many times the gate will wait out a FloodWait on the same write before
+    # giving up (the item stays dirty and is retried later by the healer).
+    tg_flood_max_retries: int = field(default_factory=lambda: _int("TG_FLOOD_MAX_RETRIES", 5))
+
     # ---- Healing ----
     heal_interval_seconds: int = field(default_factory=lambda: _int("HEAL_INTERVAL_SECONDS", 900))
     pending_max_attempts: int = field(default_factory=lambda: _int("PENDING_MAX_ATTEMPTS", 5))
