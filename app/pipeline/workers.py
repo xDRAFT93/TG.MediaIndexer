@@ -273,11 +273,10 @@ async def update_worker(client) -> None:
     # Imported lazily to avoid a circular import at module load.
     from ..ui.card import build_blocks
     from ..ui.post_manager import PostManager
-    from ..telegram.rate_limit import FloodWaitError, wrap_client
+    from ..telegram.rate_limit import FloodWaitError
 
-    # Pace every outgoing write so a large card backlog cannot trip Telegram's
-    # flood limits; the gate also waits out any FloodWaitError transparently.
-    client = wrap_client(client)
+    # NOTE: the client's writes are already paced/flood-safe (rate limiting is
+    # installed once on the shared client at startup), so no wrapping here.
     manager = PostManager()
     while True:
         media_id = await update_queue.get()
