@@ -1,5 +1,5 @@
 # Telegram userbot (MTProto client API)
-Telethon>=1.36,<2
+Telethon>=1.43,<2         # 1.43+ needed for expandable (collapsed) HTML blockquotes
 # Speeds up MTProto crypto (ships manylinux wheels, no compiler needed)
 cryptg>=0.4
 

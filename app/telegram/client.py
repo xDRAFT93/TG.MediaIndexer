@@ -13,7 +13,7 @@ from ..config import settings
 
 
 def build_client() -> TelegramClient:
-    return TelegramClient(
+    client = TelegramClient(
         StringSession(settings.tg_session),
         settings.tg_api_id,
         settings.tg_api_hash,
@@ -21,7 +21,8 @@ def build_client() -> TelegramClient:
         auto_reconnect=True,
         retry_delay=5,
         connection_retries=None,  # retry forever
-        # Transparently wait out short flood limits; longer ones are paced and
-        # handled by the outbound send gate (see telegram.rate_limit).
-        flood_sleep_threshold=settings.tg_flood_sleep_threshold,
+        # Auto-sleep FloodWaits up to this many seconds instead of raising them,
+        # so a transient rate-limit never crashes a worker or the command handler.
+        flood_sleep_threshold=settings.flood_sleep_threshold,
     )
+    return client

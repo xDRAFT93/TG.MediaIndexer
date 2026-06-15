@@ -87,22 +87,29 @@ class Settings:
 
     # ---- UI / posting ----
     tg_message_limit: int = field(default_factory=lambda: _int("TG_MESSAGE_LIMIT", 3900))
-    # Telegram media captions are limited to 1024 UTF-16 units; keep a margin.
-    tg_caption_limit: int = field(default_factory=lambda: _int("TG_CAPTION_LIMIT", 1000))
+    tg_caption_limit: int = field(default_factory=lambda: _int("TG_CAPTION_LIMIT", 1024))
+    overview_max_chars: int = field(default_factory=lambda: _int("OVERVIEW_MAX_CHARS", 600))
     episodes_full_limit: int = field(default_factory=lambda: _int("EPISODES_FULL_LIMIT", 20))
     episodes_block_limit: int = field(default_factory=lambda: _int("EPISODES_BLOCK_LIMIT", 100))
     episodes_group_limit: int = field(default_factory=lambda: _int("EPISODES_GROUP_LIMIT", 1000))
 
-    # ---- Telegram outbound rate limiting (avoids FloodWaitError) ----
-    # Minimum gap between any two outgoing writes (send/edit/delete). Bulk card
-    # posting is paced to this so Telegram's flood limits are not tripped.
-    tg_min_send_interval: float = field(default_factory=lambda: _float("TG_MIN_SEND_INTERVAL", 2.0))
-    # Telethon waits out flood errors up to this many seconds transparently;
-    # longer waits are handled (and logged) by the send gate instead.
-    tg_flood_sleep_threshold: int = field(default_factory=lambda: _int("TG_FLOOD_SLEEP_THRESHOLD", 60))
-    # How many times the gate will wait out a FloodWait on the same write before
-    # giving up (the item stays dirty and is retried later by the healer).
-    tg_flood_max_retries: int = field(default_factory=lambda: _int("TG_FLOOD_MAX_RETRIES", 5))
+    # ---- Flood control / send pacing (userbot anti-spam) ----
+    # Minimum seconds between message-mutating Telegram calls (send/edit/delete).
+    # Sustained posting into a single topic is the main flood risk; pacing it
+    # prevents Telegram from imposing large FloodWait penalties in the first place.
+    send_min_interval: float = field(default_factory=lambda: _float("SEND_MIN_INTERVAL", 3.0))
+    # Telethon auto-sleeps FloodWaits up to this many seconds instead of raising.
+    flood_sleep_threshold: int = field(default_factory=lambda: _int("FLOOD_SLEEP_THRESHOLD", 300))
+    # Backstop: when a FloodWait exceeds the threshold, wait it out and retry,
+    # but never sleep longer than this hard cap (seconds).
+    flood_wait_max: int = field(default_factory=lambda: _int("FLOOD_WAIT_MAX", 1800))
+
+    # ---- UI / posting (episode linking) ----
+    # Up to this many total episodes, every episode is rendered as an individual
+    # clickable link inside a per-season collapsible blockquote. Above it (up to
+    # episodes_group_limit) seasons collapse to one line linking the first episode.
+    episodes_link_limit: int = field(default_factory=lambda: _int("EPISODES_LINK_LIMIT", 600))
+
 
     # ---- Healing ----
     heal_interval_seconds: int = field(default_factory=lambda: _int("HEAL_INTERVAL_SECONDS", 900))

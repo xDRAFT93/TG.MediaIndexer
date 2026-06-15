@@ -188,3 +188,29 @@ docker compose down              # stoppen (Daten bleiben im Volume mongo_data)
 
 Der gesamte Zustand liegt im benannten Volume `mongo_data`; ein Neustart des
 Bots verliert nichts und nimmt unterbrochene Arbeit automatisch wieder auf.
+
+## Hinweise & Troubleshooting (Stand dieser Version)
+
+**Telethon ≥ 1.43 ist Pflicht.** Zuklappbare (expandable) Blockquotes — für die
+Beschreibung und die Episodenlisten — funktionieren erst ab Telethon 1.43.0;
+ältere Versionen ignorieren das `expandable`-Attribut und zeigen ein normales,
+nicht zugeklapptes Zitat. Nach einem Update unbedingt das Image neu bauen:
+`docker compose build --no-cache && docker compose up -d`.
+
+**Flood-Schutz (`FloodWaitError`).** Ein Userbot, der im Schwung viele Posts in
+ein Thema schreibt, löst Telegrams Spam-Schutz aus (Wartezeiten von teils
+>1000 s). Gegenmaßnahmen sind eingebaut: alle sendenden/edierenden Aufrufe sind
+global gedrosselt (`SEND_MIN_INTERVAL`, Standard 3 s) und kurze Floods verschluckt
+Telethon automatisch (`FLOOD_SLEEP_THRESHOLD`); größere werden einmal ausgesessen
+und wiederholt (gedeckelt durch `FLOOD_WAIT_MAX`). Wer schneller posten will,
+senkt `SEND_MIN_INTERVAL` — auf eigenes Risiko.
+
+**Quell- und Provider-Verlinkung.** Jede Episode/jedes Release wird per
+`t.me/c/…`-Deeplink auf den Quellpost verlinkt; die Datenquelle (TMDb/IMDb/MAL/
+AniList/Kitsu) wird im Footer verlinkt. Deeplinks funktionieren nur in
+Supergruppen/Kanälen (ID mit `-100`-Präfix), nicht in einfachen Gruppen.
+
+**Große Serien.** Bis `EPISODES_LINK_LIMIT` (Standard 600) Episoden ist jede
+Folge einzeln anklickbar (in zuklappbaren Staffel-Blöcken; sehr große Staffeln
+werden auf mehrere Blöcke aufgeteilt). Darüber wird pro Staffel eine Zeile mit
+verlinkter erster Folge gezeigt.

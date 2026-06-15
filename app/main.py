@@ -19,7 +19,6 @@ from .providers.registry import ProviderRegistry
 from .storage import database
 from .telegram.client import build_client
 from .telegram.handlers import register_handlers
-from .telegram.rate_limit import install_rate_limit
 
 
 async def amain() -> int:
@@ -38,10 +37,6 @@ async def amain() -> int:
 
     registry = ProviderRegistry()
     client = build_client()
-    # Pace ALL outgoing writes (cards, command replies, edits) through one gate
-    # so Telegram's flood limits are never tripped and any FloodWait is waited
-    # out transparently. Must be installed before handlers/workers use the client.
-    install_rate_limit(client)
     await client.connect()
     if not await client.is_user_authorized():
         log.error(

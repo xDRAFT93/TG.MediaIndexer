@@ -271,12 +271,9 @@ def _clf(det: Detection) -> dict:
 # --------------------------------------------------------------------------- #
 async def update_worker(client) -> None:
     # Imported lazily to avoid a circular import at module load.
-    from ..ui.card import build_blocks
+    from ..ui.card import build_card
     from ..ui.post_manager import PostManager
-    from ..telegram.rate_limit import FloodWaitError
 
-    # NOTE: the client's writes are already paced/flood-safe (rate limiting is
-    # installed once on the shared client at startup), so no wrapping here.
     manager = PostManager()
     while True:
         media_id = await update_queue.get()
@@ -285,18 +282,9 @@ async def update_worker(client) -> None:
             if media is None:
                 continue
             episodes = await EpisodeRepository.list_for_media(media_id)
-            blocks = build_blocks(media, episodes)
-            await manager.sync(client, media, blocks)
+            full_text = build_card(media, episodes)
+            await manager.sync(client, media, full_text)
             await MediaRepository.mark_clean(media_id)
-        except FloodWaitError as exc:
-            # Severe/persistent throttling that outlived the gate's retries. Leave
-            # the media dirty (do NOT mark clean) so the healer re-renders it
-            # later; log concisely instead of dumping a stack trace.
-            wait = getattr(exc, "seconds", "?")
-            log.warning(
-                "update_worker deferring %s: Telegram flood wait %ss (will retry via healer)",
-                media_id, wait,
-            )
         except Exception as exc:
             log.exception("update_worker failed for %s: %s", media_id, exc)
         finally:
