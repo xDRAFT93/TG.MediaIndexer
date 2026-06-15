@@ -206,11 +206,27 @@ def _release_label(rel: Release) -> str:
 # --------------------------------------------------------------------------- #
 def _footer(media: Media) -> str:
     bits: list[str] = []
-    n_sources = len(media.sources)
-    if n_sources:
-        bits.append(f"{T.EMOJI_SOURCE} Quellen: {n_sources}")
+    if media.sources:
+        bits.append(f"{T.EMOJI_SOURCE} Quellen: {_sources_line(media.sources)}")
     if media.provider_used:
         external_id = (media.providers or {}).get(media.provider_used, "")
         href = L.provider_link(media.provider_used, external_id, media.media_type)
         bits.append(f"Daten: {T.link(href, L.provider_label(media.provider_used))}")
     return " \u00b7 ".join(bits)
+
+
+def _sources_line(sources: list) -> str:
+    """Render each source as a clickable index (1 2 3 …) linking back to its
+    source thread/post; falls back to a plain number when not deep-linkable."""
+    parts: list[str] = []
+    for i, src in enumerate(sources, 1):
+        d = src if isinstance(src, dict) else (
+            src.to_dict() if hasattr(src, "to_dict") else {}
+        )
+        href = L.tg_message_link(
+            d.get("chat_id"),
+            d.get("first_message_id") or d.get("last_message_id"),
+            d.get("thread_id"),
+        )
+        parts.append(T.link(href, str(i)))
+    return " ".join(parts)
