@@ -6,7 +6,9 @@ Renders a media's card into Telegram messages and keeps them in sync:
     so the image sits ON TOP and the title follows underneath; when no poster is
     known the root is a plain text message instead;
   * overflow content goes into linked text posts that are sent AFTER the root
-    (so ordering is always root-first) and each repeats the media title;
+    and AS REPLIES TO IT, so the whole set stays threaded together and the
+    description (always on the root) is reachable from any overflow part; each
+    overflow part also repeats the media title;
   * all parts are posted into the configured target topic, in order;
   * posts are edited in place, not recreated; an unchanged chunk (same content
     hash) is skipped entirely, so updates are incremental;
@@ -60,7 +62,13 @@ class PostManager:
             digest = content_hash(text)
             post = existing_by_part.get(index)
             is_root = index == 0
-            reply_to = topic_id  # every part is sent into the target topic, in order
+            # The root post lands in the target topic; every overflow part is sent
+            # as a reply to the root post, so the whole set stays threaded together
+            # and the description (always on the root) is one tap away. Telegram
+            # keeps a reply inside the same topic as the message it replies to.
+            # (root_msg_id is set while processing index 0, which always precedes
+            # the overflow parts in this ordered loop.)
+            reply_to = topic_id if is_root else (root_msg_id or topic_id)
 
             if post is None:
                 msg, used_photo = await self._send_part(
