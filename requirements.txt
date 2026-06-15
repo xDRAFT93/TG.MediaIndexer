@@ -1,0 +1,18 @@
+# Telegram userbot (MTProto client API)
+Telethon>=1.36,<2
+# Speeds up MTProto crypto (ships manylinux wheels, no compiler needed)
+cryptg>=0.4
+
+# MongoDB - official async API (PyMongo Async; Motor is end-of-life since 2026)
+pymongo>=4.9,<5
+
+# Async HTTP for metadata providers
+httpx>=0.27
+
+# Fuzzy matching for titles / confidence scoring
+rapidfuzz>=3.6
+
+# Optional but recommended deterministic filename parsers.
+# The code degrades gracefully to regex if these are missing.
+anitopy>=2.1.1
+guessit>=3.8.0
