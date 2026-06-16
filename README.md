@@ -235,3 +235,18 @@ enthalten. Damit dabei genau **ein** korrekter Eintrag entsteht:
 - Mit `POST_ONLY_IF_RESOLVED=true` wird nichts in den Zielthread gepostet, solange
   kein Provider-Treffer vorliegt; der Eintrag erscheint automatisch, sobald der
   Healer die Metadaten auflöst.
+
+### Erkannte Episoden-Formate
+
+Damit Episoden ohne Serientitel nicht als eigenständige Einträge landen, werden
+u. a. folgende Marker erkannt (Text davor = Serientitel, Text danach =
+Episodentitel und wird ignoriert):
+
+`S01E01`, `S1.E1`, `S09 E01`, `S1-05`, `1x05`, `09x01`, `9X01`,
+`Season 1 Episode 5`, `Staffel 1 Folge 5`, `E16`, `E016`, `Ep16`, `EP16`,
+`Episode 16`, `Folge 16`, `Capitulo 16`, `#16`, Anime `- 05`, sowie reine
+führende Episodennummern im Listenformat `16 - Titel` / `16. Titel`.
+
+Steht keiner dieser Marker im Namen und auch kein Serientitel, bleibt die Datei
+„unaufgelöst" (pending) statt einen Fehleintrag zu erzeugen. Fehlt ein Format,
+das bei dir vorkommt, lässt es sich in `app/detection/patterns.py` ergänzen.

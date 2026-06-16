@@ -61,19 +61,34 @@ ANIME_HINT_RE = re.compile(
 )
 
 # --- Season/episode patterns (ordered; first match wins) ---------------------
-# Each captures named groups 'season' and/or 'episode'.
+# Each captures named groups 'season' and/or 'episode'. These also drive title
+# isolation: the series title is only ever the text BEFORE the earliest marker.
 SEASON_EPISODE_RES: list[re.Pattern] = [
-    re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._-]?E(?P<episode>\d{1,3})\b"),
+    # S01E01 / S1.E1 / S01 E01 (any run of separators)
+    re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._-]*E(?P<episode>\d{1,3})(?![0-9])\b"),
+    # 1x05 / 09x01 / 9X01 (case-insensitive x), not preceded by a digit/p/x
+    re.compile(r"(?<![0-9pPxX])\b(?P<season>\d{1,2})[xX](?P<episode>\d{1,3})\b"),
+    # season 1 episode 5 / staffel 1 folge 5 / season 1 ep 5
     re.compile(r"(?i)\b(?:season|staffel)[ ._-]*(?P<season>\d{1,2})[ ._-]+"
                r"(?:episode|folge|ep|e)[ ._-]*(?P<episode>\d{1,3})\b"),
-    re.compile(r"(?<![0-9pPxX])\b(?P<season>\d{1,2})x(?P<episode>\d{1,3})\b"),
+    # S01.E01 already covered; S1-05 (season then bare episode after dash)
+    re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._]*[-–][ ._]*(?P<episode>\d{1,3})(?![0-9])\b"),
 ]
 
 EPISODE_ONLY_RES: list[re.Pattern] = [
+    # episode/folge/ep/cap[itulo]/E + number, optional #/._- separators
     re.compile(r"(?i)\b(?:episode|folge|ep|cap(?:itulo)?)[ ._#-]*(?P<episode>\d{1,4})\b"),
+    # bare E16 / E016 (not part of a word, not a resolution like E2160p)
     re.compile(r"(?i)(?<![a-z0-9])E(?P<episode>\d{1,3})(?![0-9pP])\b"),
-    # Anime " - 05" / " – 05" after a title.
-    re.compile(r"(?:^|[\]\)\s])[-–][ ]?(?P<episode>\d{1,4})(?:v\d)?(?=[ \[\(]|$)"),
+    # #16
+    re.compile(r"(?<![\w])#[ ]?(?P<episode>\d{1,4})\b"),
+    # Anime "- 05" / "– 05" / "] 05" after a title or bracket.
+    re.compile(r"(?:^|[\]\)\s])[-–][ ]?(?P<episode>\d{1,4})(?:v\d)?(?=[ \[\(.]|$)"),
+    # Leading bare episode number in episode-list style: "16 - Title" / "16. Title"
+    # / "16 _ Title". 1-3 digits only (excludes 4-digit years); the spaced dash /
+    # dot separator is the episode-list signal. Anchored to the start so it never
+    # fires mid-name (e.g. inside "Doctor Who 2005 ...").
+    re.compile(r"^[\[\(]?(?P<episode>\d{1,3})[\]\)]?[ ._]*[-–.][ ._]+(?=\S)"),
 ]
 
 SEASON_ONLY_RES: list[re.Pattern] = [
