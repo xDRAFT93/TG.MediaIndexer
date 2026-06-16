@@ -73,7 +73,8 @@ def decide(st: ThreadState, det: Detection) -> ContextDecision:
             # An earlier file-less announcement named the series; create the media
             # now from that provisional title and attach this episode to it. This
             # is what keeps the announcement from spawning its own empty entry.
-            ptype = MediaType.coerce(st.pending_type) if st.pending_type else MediaType.SERIES
+            # The presence of an episode means it is series-like, never a film.
+            ptype = MediaType.ANIME if st.pending_type == MediaType.ANIME.value else MediaType.SERIES
             return ContextDecision(
                 action=ACTION_NEW_MEDIA,
                 create_title=st.pending_title,

@@ -56,3 +56,21 @@ def _to_int(value: Optional[str]) -> Optional[int]:
         return int(value)
     except ValueError:
         return None
+
+
+def episode_marker_start(text: str) -> int:
+    """Index where the earliest season/episode marker begins, or -1 if none.
+
+    The series title only ever appears BEFORE this point; anything after it is
+    the episode title (e.g. "Ozymandias", "finale", "the end") and must not be
+    used to identify or search the series.
+    """
+    if not text:
+        return -1
+    starts: list[int] = []
+    for group in (SEASON_EPISODE_RES, EPISODE_ONLY_RES, SEASON_ONLY_RES):
+        for rx in group:
+            m = rx.search(text)
+            if m:
+                starts.append(m.start())
+    return min(starts) if starts else -1

@@ -38,6 +38,7 @@ from ..storage.repositories import (
     ThreadStateRepository,
 )
 from ..providers.registry import ProviderRegistry, ResolveResult
+from ..util import slugify
 from .queues import ingest_queue, processing_queue, update_queue
 
 log = get_logger("pipeline.workers")
@@ -182,7 +183,19 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
     # and the later file post each produced a separate media record.
     if not _has_media_file(event):
         if det.has_title and not det.only_episode:
-            await ctx.set_pending(st, det.title, det.media_type)
+            # Use at most the first 2 lines of the announcement (image + text),
+            # as requested. Each line is a separate title candidate (line 1 is
+            # normally "Title (Year)") — never concatenate lines into one title,
+            # which would wreck the provider search.
+            pend_title, pend_type = "", det.media_type
+            for line in (event.caption or event.message_text).splitlines()[:2]:
+                a_det = classify("", line.strip(), "")
+                if a_det.has_title:
+                    pend_title, pend_type = a_det.title, a_det.media_type
+                    break
+            if not pend_title:
+                pend_title, pend_type = det.title, det.media_type
+            await ctx.set_pending(st, pend_title, pend_type)
             st.last_event_id = event._id
             await ThreadStateRepository.save(st)
             await EventRepository.set_stage(event_id, EventStage.CONTEXT.value,
@@ -201,7 +214,8 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
         return
 
     if decision.action == ctx.ACTION_NEW_MEDIA:
-        media = await _create_media(decision, det, registry)
+        media = await _create_media(decision, det, registry,
+                                    fallback_query=st.pending_title)
         await ctx.activate(st, media._id, media.title, media.media_type)
         st.last_event_id = event._id
         await ThreadStateRepository.save(st)
@@ -225,16 +239,27 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
 
 
 async def _create_media(decision, det: Detection,
-                        registry: ProviderRegistry) -> Media:
+                        registry: ProviderRegistry, fallback_query: str = "") -> Media:
     media_type = MediaType.coerce(decision.create_type)
     query = decision.create_title
     resolve: ResolveResult = await registry.resolve(query, media_type, decision.create_year)
+
+    if (not resolve.found and fallback_query
+            and slugify(fallback_query) != slugify(query)):
+        # The file's own title produced no provider match. Retry with the title
+        # from the preceding image+text announcement (only as a last resort, not
+        # as the normal path) so episodes whose filenames carry no clean series
+        # title still resolve to the right series.
+        alt = await registry.resolve(fallback_query, media_type, decision.create_year)
+        if alt.found:
+            log.info("Resolved '%s' via announcement fallback '%s'.", query, fallback_query)
+            resolve, query = alt, fallback_query
 
     if resolve.found and resolve.metadata is not None:
         meta = resolve.metadata
         media = Media(
             media_type=media_type,
-            title=meta.title or decision.create_title,
+            title=meta.title or query,
             year=meta.year or decision.create_year,
             original_title=meta.original_title,
             overview=meta.overview,
@@ -254,7 +279,7 @@ async def _create_media(decision, det: Detection,
         # card can render. The healer will retry resolution later.
         media = Media(
             media_type=media_type,
-            title=decision.create_title,
+            title=query or decision.create_title,
             year=decision.create_year,
             tags=list(det.tags),
             metadata_resolved=False,
@@ -310,6 +335,13 @@ async def update_worker(client) -> None:
         try:
             media = await MediaRepository.get(media_id)
             if media is None:
+                continue
+            if settings.post_only_if_resolved and not media.metadata_resolved:
+                # Don't surface unresolved entries; keep them catalogued and let
+                # the healer post them once a provider match is found.
+                log.info("Not posting unresolved media %s (POST_ONLY_IF_RESOLVED).",
+                         media_id)
+                await MediaRepository.mark_clean(media_id)
                 continue
             episodes = await EpisodeRepository.list_for_media(media_id)
             full_text = build_card(media, episodes)

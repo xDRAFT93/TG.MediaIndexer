@@ -110,6 +110,12 @@ class Settings:
     # episodes_group_limit) seasons collapse to one line linking the first episode.
     episodes_link_limit: int = field(default_factory=lambda: _int("EPISODES_LINK_LIMIT", 600))
 
+    # When true, media without a successful provider match (metadata unresolved)
+    # are NOT posted to the target thread. They stay catalogued in the database
+    # and are posted automatically once the healer resolves their metadata.
+    post_only_if_resolved: bool = field(
+        default_factory=lambda: _bool("POST_ONLY_IF_RESOLVED", False))
+
 
     # ---- Healing ----
     heal_interval_seconds: int = field(default_factory=lambda: _int("HEAL_INTERVAL_SECONDS", 900))

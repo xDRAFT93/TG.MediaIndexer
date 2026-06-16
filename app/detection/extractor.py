@@ -11,7 +11,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Optional
 
-from .episodes import EpisodeInfo, parse_episode
+from .episodes import EpisodeInfo, episode_marker_start, parse_episode
 from .patterns import (
     ANIME_GROUP_RE,
     ANIME_HINT_RE,
@@ -155,27 +155,44 @@ def extract_from_filename(file_name: str) -> Extraction:
     """Extract a title from a Telegram media file_name (raw, unchangeable)."""
     raw = file_name or ""
     base = _strip_extension(raw)
+    full_episode = parse_episode(base)
     anime_signal = bool(ANIME_HINT_RE.search(raw)) or _looks_like_anime_group(raw)
+
+    # The series title is only ever the text BEFORE the first episode marker.
+    # Everything after it (e.g. "finale", "Ozymandias", "the end") is the
+    # episode title and must not pollute series identification/search. With a
+    # marker at the very start (e.g. "S01E01-finale") there is no series title,
+    # so this becomes an episode-only message that binds to the thread context.
+    marker = episode_marker_start(base)
+    if marker < 0:
+        title_base = base
+    elif marker > 0:
+        title_base = base[:marker].strip(" -–_.")
+    else:
+        title_base = ""
 
     # Prefer the parser matching the strongest signal.
     chain = ([_from_anitopy, _from_guessit] if anime_signal
              else [_from_guessit, _from_anitopy])
-    for parser in chain:
-        ex = parser(base)
-        if ex and ex.has_title:
-            ex.raw = raw
-            ex.source_field = "file_name"
-            ex.anime_signal = ex.anime_signal or anime_signal
-            # Always re-derive episode from raw to be safe.
-            if not ex.episode.has_episode:
-                ex.episode = parse_episode(base)
-            return ex
+    if title_base:
+        for parser in chain:
+            ex = parser(title_base)
+            if ex and ex.has_title:
+                ex.raw = raw
+                ex.source_field = "file_name"
+                ex.anime_signal = ex.anime_signal or anime_signal
+                ex.episode = full_episode if full_episode.has_episode else parse_episode(base)
+                return ex
 
-    title, year = _fallback_title(base)
+    title, year = _fallback_title(title_base) if title_base else ("", None)
+    if year is None:
+        # the year may sit before the marker even if the parser found no title
+        ym = YEAR_RE.search(title_base or base)
+        year = int(ym.group(1)) if ym else None
     return Extraction(
         title=title,
         year=year,
-        episode=parse_episode(base),
+        episode=full_episode,
         anime_signal=anime_signal,
         source_field="file_name",
         raw=raw,

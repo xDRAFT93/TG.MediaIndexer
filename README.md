@@ -214,3 +214,24 @@ Supergruppen/Kanälen (ID mit `-100`-Präfix), nicht in einfachen Gruppen.
 Folge einzeln anklickbar (in zuklappbaren Staffel-Blöcken; sehr große Staffeln
 werden auf mehrere Blöcke aufgeteilt). Darüber wird pro Staffel eine Zeile mit
 verlinkter erster Folge gezeigt.
+
+## Titelerkennung bei dateilosen Ankündigungen (Serien)
+
+In vielen Gruppen wird zuerst ein Bild-Post mit Titel veröffentlicht und erst
+danach die Episoden, deren Dateinamen oft nur noch `S01E01-finale` o. ä.
+enthalten. Damit dabei genau **ein** korrekter Eintrag entsteht:
+
+- Der Serientitel wird aus dem Dateinamen ausschließlich aus dem Text **vor** dem
+  Episodenmarker gelesen; alles dahinter (`finale`, `Ozymandias`, `the end`) ist
+  der Episodentitel und wird für die Serienidentifikation ignoriert. `S01E01-finale`
+  ist damit „nur Episode" und bindet an den Thread-Kontext statt einen Junk-Eintrag
+  anzulegen.
+- Findet die Provider-Suche zum Dateititel nichts, wird **als letzter Ausweg** der
+  Titel des vorausgehenden Bild-Posts herangezogen (maximal die ersten 2 Zeilen,
+  jede Zeile als eigener Kandidat — nie konkateniert). Schlägt auch das fehl, wird
+  der Eintrag aus den Detection-Daten erstellt.
+- Sobald ein Treffer erzielt wurde, werden alle folgenden Episoden ohne eigenen
+  Treffer dieser gefundenen Serie zugeordnet.
+- Mit `POST_ONLY_IF_RESOLVED=true` wird nichts in den Zielthread gepostet, solange
+  kein Provider-Treffer vorliegt; der Eintrag erscheint automatisch, sobald der
+  Healer die Metadaten auflöst.
