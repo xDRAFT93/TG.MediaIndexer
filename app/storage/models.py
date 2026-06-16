@@ -43,6 +43,7 @@ class EventStage(str, Enum):
     PENDING = "pending"
     ERROR = "error"
     IGNORED = "ignored"
+    CONTEXT = "context"      # no file: only set the thread's provisional title
 
 
 def media_canonical_key(media_type: MediaType, title: str, year: Optional[int]) -> str:
@@ -252,6 +253,11 @@ class ThreadState:
     active_media_id: str = ""
     active_title: str = ""
     active_media_type: str = ""
+    # Provisional context from a file-less announcement (image + title) that may
+    # not yet have a media entry. The first real file in the thread uses it to
+    # create the single correct entry and bind to it.
+    pending_title: str = ""
+    pending_type: str = ""
     episode_cursor: int = 0       # last sequential episode number assigned
     season_cursor: int = 1
     last_event_id: str = ""
@@ -274,6 +280,8 @@ class ThreadState:
             active_media_id=d.get("active_media_id", ""),
             active_title=d.get("active_title", ""),
             active_media_type=d.get("active_media_type", ""),
+            pending_title=d.get("pending_title", ""),
+            pending_type=d.get("pending_type", ""),
             episode_cursor=d.get("episode_cursor", 0),
             season_cursor=d.get("season_cursor", 1),
             last_event_id=d.get("last_event_id", ""),

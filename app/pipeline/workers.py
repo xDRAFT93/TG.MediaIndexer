@@ -109,6 +109,17 @@ def _too_weak(det: Detection) -> bool:
     )
 
 
+def _has_media_file(event) -> bool:
+    """True only for messages carrying an actual downloadable video/document file.
+
+    Photo-only announcements and plain-text messages never carry one, so they
+    must not create a catalog entry. ``media_type_raw`` is the authoritative
+    Telegram media kind set by the parser (``video``/``document`` vs
+    ``photo``/``none``).
+    """
+    return event.media_type_raw in ("video", "document")
+
+
 # --------------------------------------------------------------------------- #
 # Ingest worker
 # --------------------------------------------------------------------------- #
@@ -162,6 +173,25 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
         return
 
     st = await ThreadStateRepository.get_or_create(event.chat_id, event.thread_id)
+
+    # Only a message carrying an actual video/document file may create or update a
+    # catalog entry. A file-less announcement (image + title, or plain text) must
+    # NOT spawn its own entry/post: if it names a title it only primes the
+    # thread's provisional context so the first real file binds to it; otherwise
+    # it is ignored. This prevents the "two entries" problem where the poster post
+    # and the later file post each produced a separate media record.
+    if not _has_media_file(event):
+        if det.has_title and not det.only_episode:
+            await ctx.set_pending(st, det.title, det.media_type)
+            st.last_event_id = event._id
+            await ThreadStateRepository.save(st)
+            await EventRepository.set_stage(event_id, EventStage.CONTEXT.value,
+                                            classification=_clf(det))
+        else:
+            await EventRepository.set_stage(event_id, EventStage.IGNORED.value,
+                                            classification=_clf(det))
+        return
+
     decision = ctx.decide(st, det)
 
     if decision.action == ctx.ACTION_UNRESOLVED:

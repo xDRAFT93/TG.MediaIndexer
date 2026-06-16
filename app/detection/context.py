@@ -69,6 +69,18 @@ def decide(st: ThreadState, det: Detection) -> ContextDecision:
                 season=season,
                 episode=det.episode.episode,
             )
+        if st.pending_title:
+            # An earlier file-less announcement named the series; create the media
+            # now from that provisional title and attach this episode to it. This
+            # is what keeps the announcement from spawning its own empty entry.
+            ptype = MediaType.coerce(st.pending_type) if st.pending_type else MediaType.SERIES
+            return ContextDecision(
+                action=ACTION_NEW_MEDIA,
+                create_title=st.pending_title,
+                create_type=ptype,
+                season=det.episode.season or 1,
+                episode=det.episode.episode,
+            )
         return ContextDecision(
             action=ACTION_UNRESOLVED,
             reason="episode without active media context",
@@ -83,8 +95,18 @@ async def activate(st: ThreadState, media_id: str, title: str,
     st.active_media_id = media_id
     st.active_title = title
     st.active_media_type = media_type.value
+    st.pending_title = ""        # provisional context consumed
+    st.pending_type = ""
     st.episode_cursor = 0
     st.season_cursor = 1
+    await ThreadStateRepository.save(st)
+
+
+async def set_pending(st: ThreadState, title: str, media_type: MediaType) -> None:
+    """Remember a provisional title from a file-less announcement without
+    creating any media. The next real file in the thread will use it."""
+    st.pending_title = title
+    st.pending_type = media_type.value
     await ThreadStateRepository.save(st)
 
 
