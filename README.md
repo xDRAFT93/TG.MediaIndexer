@@ -250,3 +250,27 @@ führende Episodennummern im Listenformat `16 - Titel` / `16. Titel`.
 Steht keiner dieser Marker im Namen und auch kein Serientitel, bleibt die Datei
 „unaufgelöst" (pending) statt einen Fehleintrag zu erzeugen. Fehlt ein Format,
 das bei dir vorkommt, lässt es sich in `app/detection/patterns.py` ergänzen.
+
+## Post-Text-gestützte Erkennung & Fehlervermeidung
+
+Der Telegram-Post-Text, mit dem ein Video geteilt wird, fließt jetzt in die
+Erkennung ein – nicht nur der Dateiname:
+
+- **Trailer:** Enthält der Post-Text das Wort „trailer", wird das Video komplett
+  ignoriert (kein Eintrag, kein Post, keine Quelle).
+- **Episodenmarker im Post-Text:** Heißt die Datei nur wie der Episodentitel
+  (`Endlich Frieden`) und der Post-Text liefert den Marker (`E19 - Endlich
+  Frieden`), wird das als Episode erkannt und an die Serie des vorausgehenden
+  Bild-Posts gebunden – statt einen Einzeleintrag zu erzeugen. Der Serientitel
+  ist immer der Text **vor** dem Marker der markertragenden Quelle.
+- **Jahr aus dem Post-Text:** Fehlt im Dateinamen das Jahr (`chinatown`), wird es
+  aus dem Post-Text (`chinatown (1974)`) übernommen.
+- **Junk-Präfixe:** Downloader-/Seiten-Präfixe wie `Y2Mate`, `vıvo Watch` werden
+  vom Titel entfernt (echte Titel wie „Watch Dogs"/„The Ting" bleiben erhalten).
+- **Teil-Marker:** `TitelT01`, `t02`, `PeleT03` werden als Episoden/Teile erkannt.
+- **Jahr ≠ Episode:** Eine 4-stellige Jahreszahl (z. B. `- 1992`) wird nicht mehr
+  als Episodennummer (`S1E1992`) interpretiert; Filme bleiben Filme.
+
+Mehrere Episoden derselben Serie (`Spartacus Blood and Sand S02E03`,
+`Britannia - S02E09 - …`) landen dadurch in **einem** Eintrag statt je Episode in
+einem eigenen.

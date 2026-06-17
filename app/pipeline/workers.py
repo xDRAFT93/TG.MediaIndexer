@@ -15,6 +15,7 @@ wrapped in try/except; a failing item is marked ERROR and the worker continues.
 from __future__ import annotations
 
 import asyncio
+import re
 from typing import Optional
 
 from ..config import settings
@@ -121,6 +122,19 @@ def _has_media_file(event) -> bool:
     return event.media_type_raw in ("video", "document")
 
 
+_TRAILER_RE = re.compile(r"(?i)\btrailers?\b")
+
+
+def _is_trailer(event) -> bool:
+    """True if the post text the video was shared with mentions a trailer.
+
+    The filename is intentionally NOT checked (release filenames can contain the
+    word incidentally); only the human-written caption/message text counts.
+    """
+    text = f"{event.caption or ''} {event.message_text or ''}"
+    return bool(_TRAILER_RE.search(text))
+
+
 # --------------------------------------------------------------------------- #
 # Ingest worker
 # --------------------------------------------------------------------------- #
@@ -157,6 +171,13 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
     if event is None:
         return
     if event.is_bot:
+        await EventRepository.set_stage(event_id, EventStage.IGNORED.value)
+        return
+
+    # Trailers must never create or update a catalog entry. If the post text the
+    # video was shared with mentions "trailer", drop it: no entry, no post, no
+    # source tracking.
+    if _is_trailer(event):
         await EventRepository.set_stage(event_id, EventStage.IGNORED.value)
         return
 

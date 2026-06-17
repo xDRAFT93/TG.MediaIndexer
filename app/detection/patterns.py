@@ -64,31 +64,38 @@ ANIME_HINT_RE = re.compile(
 # Each captures named groups 'season' and/or 'episode'. These also drive title
 # isolation: the series title is only ever the text BEFORE the earliest marker.
 SEASON_EPISODE_RES: list[re.Pattern] = [
-    # S01E01 / S1.E1 / S01 E01 (any run of separators)
-    re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._-]*E(?P<episode>\d{1,3})(?![0-9])\b"),
+    # S01E01 / S1.E1 / S01 E01, also when glued to the title ("LuciferS04E09").
+    re.compile(r"(?i)S(?P<season>\d{1,2})[ ._-]*E(?P<episode>\d{1,3})(?![0-9])"),
     # 1x05 / 09x01 / 9X01 (case-insensitive x), not preceded by a digit/p/x
     re.compile(r"(?<![0-9pPxX])\b(?P<season>\d{1,2})[xX](?P<episode>\d{1,3})\b"),
     # season 1 episode 5 / staffel 1 folge 5 / season 1 ep 5
     re.compile(r"(?i)\b(?:season|staffel)[ ._-]*(?P<season>\d{1,2})[ ._-]+"
                r"(?:episode|folge|ep|e)[ ._-]*(?P<episode>\d{1,3})\b"),
-    # S01.E01 already covered; S1-05 (season then bare episode after dash)
+    # episode 6 staffel 1  (marker order reversed)
+    re.compile(r"(?i)\b(?:episode|folge)[ ._-]*(?P<episode>\d{1,3})[ ._-]+"
+               r"(?:season|staffel)[ ._-]*(?P<season>\d{1,2})\b"),
+    # S1-05 (season then bare episode after dash)
     re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._]*[-–][ ._]*(?P<episode>\d{1,3})(?![0-9])\b"),
 ]
 
 EPISODE_ONLY_RES: list[re.Pattern] = [
-    # episode/folge/ep/cap[itulo]/E + number, optional #/._- separators
-    re.compile(r"(?i)\b(?:episode|folge|ep|cap(?:itulo)?)[ ._#-]*(?P<episode>\d{1,4})\b"),
+    # episode/folge/ep/cap[itulo] + number (1-3 digits; a 4-digit number is a year)
+    re.compile(r"(?i)\b(?:episode|folge|ep|cap(?:itulo)?)[ ._#-]*(?P<episode>\d{1,3})(?![0-9])\b"),
     # bare E16 / E016 (not part of a word, not a resolution like E2160p)
     re.compile(r"(?i)(?<![a-z0-9])E(?P<episode>\d{1,3})(?![0-9pP])\b"),
+    # part markers TitelT01 / T01 / t02  (Teil/part), 1-2 digits
+    re.compile(r"(?i)(?:(?<=[a-zäöü])|(?<![a-z0-9]))T(?P<episode>\d{1,2})(?![0-9])\b"),
     # #16
-    re.compile(r"(?<![\w])#[ ]?(?P<episode>\d{1,4})\b"),
-    # Anime "- 05" / "– 05" / "] 05" after a title or bracket.
-    re.compile(r"(?:^|[\]\)\s])[-–][ ]?(?P<episode>\d{1,4})(?:v\d)?(?=[ \[\(.]|$)"),
-    # Leading bare episode number in episode-list style: "16 - Title" / "16. Title"
-    # / "16 _ Title". 1-3 digits only (excludes 4-digit years); the spaced dash /
-    # dot separator is the episode-list signal. Anchored to the start so it never
-    # fires mid-name (e.g. inside "Doctor Who 2005 ...").
+    re.compile(r"(?<![\w])#[ ]?(?P<episode>\d{1,3})(?![0-9])\b"),
+    # Anime "- 05" / "– 05" / "] 05" after a title (1-3 digits; never a 4-digit year)
+    re.compile(r"(?:^|[\]\)\s])[-–][ ]?(?P<episode>\d{1,3})(?:v\d)?(?=[ \[\(.]|$)"),
+    # Leading bare episode number in list style: "16 - Title" / "16. Title".
     re.compile(r"^[\[\(]?(?P<episode>\d{1,3})[\]\)]?[ ._]*[-–.][ ._]+(?=\S)"),
+    # Weakest: a 1-2 digit number, space(s), then a word — "4 Ausgebrannt ...".
+    # Requires a real space so dotted names ("300.2006", "24.mkv") are unaffected;
+    # capped at 2 digits so "300"/"1917" stay films. In a non-series thread an
+    # accidental match merely lands in pending; in a series thread it binds.
+    re.compile(r"^(?P<episode>\d{1,2})[ ]+(?=[^\d\s])"),
 ]
 
 SEASON_ONLY_RES: list[re.Pattern] = [
@@ -98,6 +105,20 @@ SEASON_ONLY_RES: list[re.Pattern] = [
 
 # Used to scrub episode markers out of a title candidate.
 EP_SCRUB_RES: list[re.Pattern] = SEASON_EPISODE_RES + EPISODE_ONLY_RES + SEASON_ONLY_RES
+
+# Downloader / ripper / site noise that gets prepended to titles. "Strong" names
+# are site/ripper brands that are never part of a real title, so they are removed
+# even when leading. "Weak" words (watch/online/...) are only removed once a
+# strong token has already been dropped (so real titles like "Watch Dogs" or
+# "The Ting" survive). Leading glue ("is") is dropped only after a strong drop.
+JUNK_STRONG_PREFIXES = (
+    "y2mate", "ssyoutube", "savefrom", "vivo", "9xmovies", "1tamilmv", "tamilmv",
+    "filmywap", "khatrimaza", "moviesflix", "bolly4u", "worldfree4u", "mkvcinemas",
+    "katmoviehd", "ssrmovies", "uwatchfree", "pagalmovies",
+)
+JUNK_STRONG_EXACT = {"www", "com", "net", "org"}
+JUNK_WEAK_TOKENS = {"watch", "online", "download", "downloaden", "free", "fullhd", "stream"}
+JUNK_LEADING_GLUE = {"is"}
 
 SEPARATOR_RE = re.compile(r"[._]+")
 MULTISPACE_RE = re.compile(r"\s+")

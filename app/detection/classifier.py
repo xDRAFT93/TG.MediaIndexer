@@ -62,44 +62,67 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
                 tags.append(t)
         anime_signal = anime_signal or ex.anime_signal
 
-    # Choose title by strict priority order of the fields present.
-    chosen: Optional[Extraction] = None
-    for ex in extractions:
-        if ex.has_title:
-            chosen = ex
-            break
-
-    # Episode info: take from the chosen field, else any field that has it.
+    # Episode: prefer a source with full season+episode, then any episode, then a
+    # season-only signal — scanning sources in priority order (file/caption/text).
     episode = EpisodeInfo()
     for ex in extractions:
-        if ex.episode.has_any:
+        if ex.episode.has_episode and ex.episode.season is not None:
             episode = ex.episode
             break
-    if chosen and chosen.episode.has_any:
-        episode = chosen.episode
+    if not episode.has_episode:
+        for ex in extractions:
+            if ex.episode.has_episode:
+                episode = ex.episode
+                break
+    if not episode.has_any:
+        for ex in extractions:
+            if ex.episode.has_any:
+                episode = ex.episode
+                break
 
-    anime_by_tag = any(t in {"anime", " animes"} or t == "anime" for t in tags)
+    anime_by_tag = any(t == "anime" for t in tags)
     anime_signal = anime_signal or anime_by_tag
 
+    has_marker = any(ex.has_own_marker for ex in extractions)
+
+    # Series-title selection. The decisive rule: when an episode marker exists
+    # ANYWHERE, the series title is the text BEFORE the marker, taken from the
+    # highest-priority source that itself carried the marker. A source whose only
+    # "title" is really the episode title (no marker of its own) is NOT used as a
+    # series name. If no marker-bearing source yields a title, this is an
+    # episode-only message that must bind to the thread's series.
+    if has_marker:
+        chosen = next((ex for ex in extractions
+                       if ex.has_own_marker and ex.has_title), None)
+    else:
+        chosen = next((ex for ex in extractions if ex.has_title), None)
+
+    # Year: from the chosen source, else from any source that carries one.
+    year = chosen.year if chosen else None
+    if year is None:
+        for ex in extractions:
+            if ex.year:
+                year = ex.year
+                break
+
     if chosen is None:
-        # No title anywhere. If there is episode info -> bind to context.
+        # No usable series title. With an episode -> bind to the thread context.
         if episode.has_episode:
             return Detection(
                 has_title=False,
                 only_episode=True,
                 episode=episode,
+                year=year,
                 tags=tags,
                 anime_signal=anime_signal,
                 confidence=0.5,
             )
-        # Nothing usable.
-        return Detection(has_title=False, only_episode=False, tags=tags,
+        return Detection(has_title=False, only_episode=False, year=year, tags=tags,
                          anime_signal=anime_signal, confidence=0.0)
 
     media_type, type_conf = _decide_type(chosen, episode, anime_signal)
 
     base = _TITLE_SOURCE_WEIGHT.get(chosen.source_field, 0.5)
-    year = chosen.year
     confidence = base + (0.08 if year else 0.0)
     confidence = min(1.0, confidence * (0.6 + 0.4 * type_conf))
 

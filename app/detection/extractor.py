@@ -18,6 +18,10 @@ from .patterns import (
     BRACKET_RE,
     EP_SCRUB_RES,
     HASHTAG_RE,
+    JUNK_LEADING_GLUE,
+    JUNK_STRONG_EXACT,
+    JUNK_STRONG_PREFIXES,
+    JUNK_WEAK_TOKENS,
     MULTISPACE_RE,
     RELEASE_TOKENS,
     SEPARATOR_RE,
@@ -48,11 +52,41 @@ class Extraction:
     anime_signal: bool = False
     group: str = ""
     source_field: str = ""   # file_name | caption | message_text
+    has_own_marker: bool = False  # this source contained a season/episode marker
     raw: str = ""
 
     @property
     def has_title(self) -> bool:
         return bool(self.title.strip())
+
+
+def _norm_token(tok: str) -> str:
+    return "".join(ch for ch in tok.lower().replace("ı", "i") if ch.isalnum())
+
+
+def strip_junk_prefix(title: str) -> str:
+    """Remove leading downloader/site noise (Y2Mate, vıvo Watch, ...) from a
+    title without eating real leading words like "Watch Dogs" or "The Ting"."""
+    if not title:
+        return title
+    tokens = title.split()
+    out = list(tokens)
+    dropped_strong = False
+    while out:
+        n = _norm_token(out[0])
+        if not n:
+            out.pop(0)
+            continue
+        if n in JUNK_STRONG_EXACT or any(n.startswith(p) for p in JUNK_STRONG_PREFIXES):
+            out.pop(0)
+            dropped_strong = True
+            continue
+        if dropped_strong and (n in JUNK_WEAK_TOKENS or n in JUNK_LEADING_GLUE):
+            out.pop(0)
+            continue
+        break
+    result = " ".join(out).strip(" -–_")
+    return result or title  # never strip everything away
 
 
 def _strip_extension(name: str) -> str:
@@ -93,7 +127,7 @@ def _fallback_title(raw: str) -> tuple[str, Optional[int]]:
         title_tokens.append(tok)
 
     title = MULTISPACE_RE.sub(" ", " ".join(title_tokens)).strip(" -–_")
-    return title, year
+    return strip_junk_prefix(title), year
 
 
 def _from_anitopy(raw: str) -> Optional[Extraction]:
@@ -182,7 +216,10 @@ def extract_from_filename(file_name: str) -> Extraction:
                 ex.source_field = "file_name"
                 ex.anime_signal = ex.anime_signal or anime_signal
                 ex.episode = full_episode if full_episode.has_episode else parse_episode(base)
-                return ex
+                ex.title = strip_junk_prefix(ex.title)
+                ex.has_own_marker = marker >= 0
+                if ex.has_title:
+                    return ex
 
     title, year = _fallback_title(title_base) if title_base else ("", None)
     if year is None:
@@ -195,30 +232,50 @@ def extract_from_filename(file_name: str) -> Extraction:
         episode=full_episode,
         anime_signal=anime_signal,
         source_field="file_name",
+        has_own_marker=marker >= 0,
         raw=raw,
     )
 
 
 def extract_from_text(text: str, source_field: str) -> Extraction:
-    """Extract a title from caption/message_text (already line-limited)."""
+    """Extract a title from caption/message_text (already line-limited).
+
+    The same marker rule as for filenames applies: the series title is only the
+    text BEFORE any episode marker. A caption like "E19 - Endlich Frieden" or
+    "Episode 6 Staffel 1 ..." therefore yields NO series title (the rest is the
+    episode title) and becomes an episode-only signal that binds to the thread.
+    """
     raw = text or ""
     tags = _extract_hashtags(raw)
     # Remove hashtags from the title candidate (they are metadata, never titles).
     cleaned = HASHTAG_RE.sub(" ", raw).strip()
     anime_signal = bool(ANIME_HINT_RE.search(raw))
 
-    title, year = _fallback_title(cleaned)
+    full_episode = parse_episode(cleaned)
+    marker = episode_marker_start(cleaned)
+    if marker < 0:
+        title_space = cleaned
+    elif marker > 0:
+        title_space = cleaned[:marker].strip(" -–_.")
+    else:
+        title_space = ""
+
+    title, year = _fallback_title(title_space) if title_space else ("", None)
     # If the cleaned line is short and has no release noise, treat it as title.
-    if not title and cleaned and len(cleaned.split()) <= 12:
-        title = MULTISPACE_RE.sub(" ", cleaned).strip(" -–_")
+    if not title and title_space and len(title_space.split()) <= 12:
+        title = strip_junk_prefix(MULTISPACE_RE.sub(" ", title_space).strip(" -–_"))
+    if year is None:
+        ym = YEAR_RE.search(cleaned)  # the year may sit anywhere in the caption
+        year = int(ym.group(1)) if ym else None
 
     return Extraction(
         title=title,
         year=year,
         tags=tags,
-        episode=parse_episode(raw),
+        episode=full_episode,
         anime_signal=anime_signal,
         source_field=source_field,
+        has_own_marker=marker >= 0,
         raw=raw,
     )
 
