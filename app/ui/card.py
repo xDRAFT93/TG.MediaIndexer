@@ -36,7 +36,7 @@ def build_card(media: Media, episodes: list[Episode]) -> str:
         parts.append(meta)
 
     if media.media_type in (MediaType.SERIES, MediaType.ANIME):
-        section = _episode_section(episodes)
+        section = _episode_section(episodes, media.metadata_resolved)
         if section:
             parts.append("")
             parts.append(section)
@@ -57,7 +57,7 @@ def build_card(media: Media, episodes: list[Episode]) -> str:
 # --------------------------------------------------------------------------- #
 # Episodes
 # --------------------------------------------------------------------------- #
-def _episode_section(episodes: list[Episode]) -> str:
+def _episode_section(episodes: list[Episode], resolved: bool = True) -> str:
     if not episodes:
         return ""
     total = len(episodes)
@@ -66,9 +66,12 @@ def _episode_section(episodes: list[Episode]) -> str:
         by_season[ep.season].append(ep)
     seasons = sorted(by_season)
 
+    body = "\n".join(_episode_blocks(by_season, seasons))
+    if not resolved:
+        # Unresolved entries omit the "Episoden: N in M Staffel(n)" summary line.
+        return body
     header = f"{T.EMOJI_EPISODES} Episoden: {total} in {len(seasons)} Staffel(n)"
-    blocks = _episode_blocks(by_season, seasons)
-    return f"{header}\n" + "\n".join(blocks) if blocks else header
+    return f"{header}\n{body}"
 
 
 # Visible-text budget for a single collapsible block. Telegram counts only the
@@ -79,28 +82,52 @@ def _block_budget() -> int:
     return max(400, settings.tg_message_limit - 150)
 
 
+_QUALITY_RANK = {
+    "2160p": 5, "4k": 5, "uhd": 5, "1080p": 4, "1080i": 4,
+    "720p": 3, "576p": 2, "480p": 1, "360p": 0,
+}
+
+
+def _release_link(rel: Release) -> str:
+    return L.tg_message_link(rel.chat_id, rel.message_id, rel.thread_id)
+
+
+def _episode_token(ep: Episode) -> str:
+    """Linked episode number. When the same episode exists in several versions
+    (e.g. a 720p file later replaced by a 1080p one), the number links to the
+    best version and each additional version is appended as its own linked tag
+    — so every source post stays reachable, separated by quality."""
+    code = f"E{ep.episode:02d}"
+    rels = list(ep.releases)
+    if not rels:
+        return T.link("", code)
+    rels.sort(key=lambda r: (_QUALITY_RANK.get((r.quality or "").lower(), 0),
+                             r.message_id or 0), reverse=True)
+    token = T.link(_release_link(rels[0]), code)
+    for i, r in enumerate(rels[1:], start=2):
+        label = r.quality or f"v{i}"
+        token += T.link(_release_link(r), f"[{label}]")
+    return token
+
+
 def _episode_blocks(by_season, seasons) -> list[str]:
     """One or more collapsed blockquotes per season. The season header sits
-    INSIDE the block (so it can never end up on a different post than its
-    episodes), every episode is on its own line and individually linked, and a
-    season is split across blocks only when its VISIBLE length would exceed one
-    Telegram message."""
+    INSIDE the block on its own line; the episodes follow as space-separated,
+    individually-linked numbers (``E01 E02 E03 …``) that wrap naturally — so no
+    line is wasted per episode. A season is split across blocks only when its
+    VISIBLE length would exceed one Telegram message."""
     budget = _block_budget()
     blocks: list[str] = []
     for s in seasons:
         eps = sorted(by_season[s], key=lambda e: e.episode)
-        lines: list[tuple[Episode, str]] = []
-        for ep in eps:
-            code = f"E{ep.episode:02d}"
-            label = f"{code} \u2014 {ep.title}" if ep.title else code
-            lines.append((ep, T.link(_episode_source(ep), label)))
-        for chunk, multi in _pack_by_visible(lines, budget, header_reserve=40):
+        tokens = [(ep, _episode_token(ep)) for ep in eps]
+        for chunk, multi in _pack_by_visible(tokens, budget, header_reserve=40):
             lo, hi = chunk[0][0].episode, chunk[-1][0].episode
             if multi:
                 head = f"<b>Staffel {s:02d}</b> (E{lo:02d}\u2013E{hi:02d})"
             else:
                 head = f"<b>Staffel {s:02d}</b> ({len(chunk)} Ep.)"
-            inner = head + "\n" + "\n".join(html for _ep, html in chunk)
+            inner = head + "\n" + " ".join(html for _ep, html in chunk)
             blocks.append(T.expandable_quote(inner))
     return blocks
 
@@ -125,15 +152,6 @@ def _pack_by_visible(items, budget: int, header_reserve: int):
         yield g, multi
 
 
-def _episode_source(ep: Episode) -> str:
-    """Deep link to the source post of an episode's first known release."""
-    for rel in ep.releases:
-        href = L.tg_message_link(rel.chat_id, rel.message_id, rel.thread_id)
-        if href:
-            return href
-    return ""
-
-
 def _compress_ranges(nums: list[int]) -> str:
     if not nums:
         return ""
@@ -156,14 +174,18 @@ def _compress_ranges(nums: list[int]) -> str:
 def _release_section(releases: list[Release]) -> str:
     if not releases:
         return ""
-    header = f"{T.EMOJI_RELEASES} Releases: {len(releases)}"
+    header_text = f"{T.EMOJI_RELEASES} Releases: {len(releases)}"
     lines: list[tuple[int, str]] = []
     for i, rel in enumerate(releases):
         href = L.tg_message_link(rel.chat_id, rel.message_id, rel.thread_id)
         lines.append((i, f"\u2022 {T.link(href, _release_label(rel))}"))
-    out = [header]
-    for chunk, _multi in _pack_by_visible(lines, _block_budget(), header_reserve=0):
-        inner = "\n".join(html for _i, html in chunk)
+    out: list[str] = []
+    for idx, (chunk, _multi) in enumerate(_pack_by_visible(lines, _block_budget(),
+                                                           header_reserve=40)):
+        body = "\n".join(html for _i, html in chunk)
+        # The "Releases: N" header lives INSIDE the (first) collapsed block,
+        # together with the linked film versions.
+        inner = f"{header_text}\n{body}" if idx == 0 else body
         out.append(T.expandable_quote(inner))
     return "\n".join(out)
 

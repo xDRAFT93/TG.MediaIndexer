@@ -293,3 +293,17 @@ einem eigenen.
 `ANIME_SOURCE_THREAD_IDS` (kommagetrennte Topic-IDs): Für Dateien aus diesen
 Threads versucht der Resolver zuerst die Anime-Provider (Jikan/AniList/Kitsu) und
 erst danach TMDb/OMDb – unabhängig davon, wie der Dateiname aussieht.
+
+## Episoden kompakt, Versionen & unaufgelöste Einträge
+
+- **Kompakt:** Episoden stehen nebeneinander als `E01 E02 E03 …` (umbrechend) im
+  zugeklappten Staffel-Block, nicht mehr eine pro Zeile – das spart Posts.
+- **Mehrere Versionen:** Wird eine Episode später in besserer Qualität gepostet,
+  verlinkt `E01` auf die beste Version und jede weitere erscheint als eigener
+  Tag dahinter, z. B. `E01[720p]` – beide Quellposts bleiben erreichbar.
+  (Identische Dateien werden nicht doppelt geführt; nur echte andere Versionen.)
+- **Filme:** Die Zeile `📦 Releases: N` steht jetzt mitsamt den verlinkten
+  Filmversionen INNERHALB des zugeklappten Zitats.
+- **Ohne Provider-Treffer:** Die Zusammenfassungszeile „🎞️ Episoden: N in M
+  Staffel(n)" wird bei unaufgelösten Einträgen weggelassen (die Staffel-Blöcke
+  bleiben).
