@@ -110,6 +110,11 @@ class Settings:
     # episodes_group_limit) seasons collapse to one line linking the first episode.
     episodes_link_limit: int = field(default_factory=lambda: _int("EPISODES_LINK_LIMIT", 600))
 
+    # Thread/topic IDs whose files are anime: for these the resolver tries the
+    # anime providers (Jikan/AniList/Kitsu) BEFORE TMDb/OMDb. Comma-separated.
+    anime_source_threads: list[int] = field(
+        default_factory=lambda: _csv_int("ANIME_SOURCE_THREAD_IDS"))
+
     # When true, media without a successful provider match (metadata unresolved)
     # are NOT posted to the target thread. They stay catalogued in the database
     # and are posted automatically once the healer resolves their metadata.

@@ -67,28 +67,62 @@ def _episode_section(episodes: list[Episode]) -> str:
     seasons = sorted(by_season)
 
     header = f"{T.EMOJI_EPISODES} Episoden: {total} in {len(seasons)} Staffel(n)"
-
-    if total <= settings.episodes_full_limit:
-        body = _episodes_full(by_season, seasons)
-    elif total <= settings.episodes_link_limit:
-        # Every episode stays individually clickable, packed into a per-season
-        # collapsible blockquote so the post stays compact but loses no links.
-        body = _episodes_seasons_linked(by_season, seasons)
-    else:
-        # Very large series: one line per season, first episode linked as anchor.
-        body = _episodes_overview_linked(by_season, seasons)
-
-    return f"{header}\n{body}".rstrip() if body else header
+    blocks = _episode_blocks(by_season, seasons)
+    return f"{header}\n" + "\n".join(blocks) if blocks else header
 
 
-def _episodes_full(by_season, seasons) -> str:
-    lines: list[str] = []
+# Visible-text budget for a single collapsible block. Telegram counts only the
+# visible text against its limit, so a block of episode links is small even when
+# the underlying HTML (deep-link URLs) is large. Leave room for the overflow
+# header the post manager may prepend.
+def _block_budget() -> int:
+    return max(400, settings.tg_message_limit - 150)
+
+
+def _episode_blocks(by_season, seasons) -> list[str]:
+    """One or more collapsed blockquotes per season. The season header sits
+    INSIDE the block (so it can never end up on a different post than its
+    episodes), every episode is on its own line and individually linked, and a
+    season is split across blocks only when its VISIBLE length would exceed one
+    Telegram message."""
+    budget = _block_budget()
+    blocks: list[str] = []
     for s in seasons:
-        for ep in sorted(by_season[s], key=lambda e: e.episode):
-            code = f"S{ep.season:02d}E{ep.episode:02d}"
+        eps = sorted(by_season[s], key=lambda e: e.episode)
+        lines: list[tuple[Episode, str]] = []
+        for ep in eps:
+            code = f"E{ep.episode:02d}"
             label = f"{code} \u2014 {ep.title}" if ep.title else code
-            lines.append(T.link(_episode_source(ep), label))
-    return "\n".join(lines)
+            lines.append((ep, T.link(_episode_source(ep), label)))
+        for chunk, multi in _pack_by_visible(lines, budget, header_reserve=40):
+            lo, hi = chunk[0][0].episode, chunk[-1][0].episode
+            if multi:
+                head = f"<b>Staffel {s:02d}</b> (E{lo:02d}\u2013E{hi:02d})"
+            else:
+                head = f"<b>Staffel {s:02d}</b> ({len(chunk)} Ep.)"
+            inner = head + "\n" + "\n".join(html for _ep, html in chunk)
+            blocks.append(T.expandable_quote(inner))
+    return blocks
+
+
+def _pack_by_visible(items, budget: int, header_reserve: int):
+    """Greedily group (key, html) items so each group's visible length (plus a
+    header reserve) fits ``budget``. Yields (group, is_multi)."""
+    groups: list[list] = []
+    cur: list = []
+    cur_vis = header_reserve
+    for key, html in items:
+        add = T.visible_len(html) + 1  # +1 for the newline
+        if cur and cur_vis + add > budget:
+            groups.append(cur)
+            cur, cur_vis = [], header_reserve
+        cur.append((key, html))
+        cur_vis += add
+    if cur:
+        groups.append(cur)
+    multi = len(groups) > 1
+    for g in groups:
+        yield g, multi
 
 
 def _episode_source(ep: Episode) -> str:
@@ -98,68 +132,6 @@ def _episode_source(ep: Episode) -> str:
         if href:
             return href
     return ""
-
-
-def _episodes_seasons_linked(by_season, seasons) -> str:
-    """One or more collapsible blockquotes per season, every episode linked.
-
-    A season whose linked list would exceed one Telegram message is split into
-    several blockquotes (E01–E42, E43–E84, …) rather than dropping links — the
-    body of each blockquote is a single physical line so the post splitter can
-    never tear a ``<blockquote>`` pair across two posts.
-    """
-    # Leave room for the open/close tags, a season header line and the overflow
-    # header the post manager may prepend, all within one Telegram message.
-    max_inner = max(400, settings.tg_message_limit - 380)
-    lines: list[str] = []
-    for s in seasons:
-        eps = sorted(by_season[s], key=lambda e: e.episode)
-        chunks = _pack_tokens(eps, max_inner)
-        multi = len(chunks) > 1
-        for chunk in chunks:
-            lo, hi = chunk[0][0].episode, chunk[-1][0].episode
-            if multi:
-                head = f"<b>Staffel {s:02d}</b> (E{lo:02d}\u2013E{hi:02d}, {len(chunk)})"
-            else:
-                head = f"<b>Staffel {s:02d}</b> ({len(chunk)} Ep.)"
-            inner = " ".join(tok for _ep, tok in chunk)
-            lines.append(f"{head}\n<blockquote expandable>{inner}</blockquote>")
-    return "\n".join(lines)
-
-
-def _pack_tokens(eps: list[Episode], max_inner: int):
-    """Greedily group episodes so each group's joined links fit ``max_inner``."""
-    groups: list[list] = []
-    cur: list = []
-    cur_len = 0
-    for e in eps:
-        tok = T.link(_episode_source(e), f"E{e.episode:02d}")
-        add = len(tok) + (1 if cur else 0)
-        if cur and cur_len + add > max_inner:
-            groups.append(cur)
-            cur, cur_len = [], 0
-            add = len(tok)
-        cur.append((e, tok))
-        cur_len += add
-    if cur:
-        groups.append(cur)
-    return groups
-
-
-def _episodes_overview_linked(by_season, seasons) -> str:
-    """Compact overview: one line per season, first episode linked as anchor."""
-    if len(seasons) > 200:
-        return ""  # absurd season count -> header-only overview
-    return "\n".join(
-        _season_fallback_line(s, sorted(by_season[s], key=lambda e: e.episode))
-        for s in seasons
-    )
-
-
-def _season_fallback_line(s: int, eps: list[Episode]) -> str:
-    rng = _compress_ranges([e.episode for e in eps])
-    marker = T.link(_episode_source(eps[0]), f"S{s:02d}E{eps[0].episode:02d}")
-    return f"<b>Staffel {s:02d}</b> ({len(eps)} Ep.): {rng} \u00b7 ab {marker}"
 
 
 def _compress_ranges(nums: list[int]) -> str:
@@ -185,13 +157,15 @@ def _release_section(releases: list[Release]) -> str:
     if not releases:
         return ""
     header = f"{T.EMOJI_RELEASES} Releases: {len(releases)}"
-    if len(releases) > settings.episodes_full_limit:
-        return header
-    lines = [header]
-    for rel in releases:
+    lines: list[tuple[int, str]] = []
+    for i, rel in enumerate(releases):
         href = L.tg_message_link(rel.chat_id, rel.message_id, rel.thread_id)
-        lines.append(f"\u2022 {T.link(href, _release_label(rel))}")
-    return "\n".join(lines)
+        lines.append((i, f"\u2022 {T.link(href, _release_label(rel))}"))
+    out = [header]
+    for chunk, _multi in _pack_by_visible(lines, _block_budget(), header_reserve=0):
+        inner = "\n".join(html for _i, html in chunk)
+        out.append(T.expandable_quote(inner))
+    return "\n".join(out)
 
 
 def _release_label(rel: Release) -> str:

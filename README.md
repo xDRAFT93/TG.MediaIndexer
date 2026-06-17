@@ -274,3 +274,22 @@ Erkennung ein – nicht nur der Dateiname:
 Mehrere Episoden derselben Serie (`Spartacus Blood and Sand S02E03`,
 `Britannia - S02E09 - …`) landen dadurch in **einem** Eintrag statt je Episode in
 einem eigenen.
+
+## Darstellung: zugeklappte Blöcke & korrektes Zeichenlimit
+
+- **Alle Episoden** stehen jetzt in zugeklappten (expandable) Staffel-Blöcken,
+  egal wie viele – die Staffelüberschrift steht **im Block** über den Folgen, und
+  ein ganzer Block landet nie aufgeteilt auf zwei Posts.
+- **Unaufgelöste Einträge** (ohne Provider-Treffer) zeigen ihre Film-/Episoden-
+  Links ebenfalls in zugeklappten Zitaten.
+- **Zeichenlimit korrekt gezählt:** Telegram rechnet nur den *sichtbaren* Text auf
+  sein 4096-Limit an – die langen `t.me`-Deeplink-URLs zählen nicht mit. Vorher
+  wurde die rohe HTML-Länge gezählt, daher der vorzeitige Umbruch bei ~48
+  Episoden. Jetzt wird die sichtbare Länge gemessen, sodass deutlich mehr Folgen
+  pro Post passen (z. B. 100 Folgen in einem Block).
+
+## Anime-Quellthread
+
+`ANIME_SOURCE_THREAD_IDS` (kommagetrennte Topic-IDs): Für Dateien aus diesen
+Threads versucht der Resolver zuerst die Anime-Provider (Jikan/AniList/Kitsu) und
+erst danach TMDb/OMDb – unabhängig davon, wie der Dateiname aussieht.

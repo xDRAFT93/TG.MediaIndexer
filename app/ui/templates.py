@@ -17,6 +17,8 @@ exists — in particular the runtime line is omitted when runtime is unknown
 """
 from __future__ import annotations
 
+import re as _re
+
 from typing import Optional
 
 from ..storage.models import Media
@@ -29,6 +31,26 @@ EMOJI_EPISODES = "\U0001F39E\uFE0F"  # 🎞️
 EMOJI_RELEASES = "\U0001F4E6"  # 📦
 EMOJI_SOURCE = "\U0001F517"    # 🔗
 EMOJI_CONT = "\u27A1\uFE0F"    # ➡️
+
+_TAG_RE = _re.compile(r"<[^>]+>")
+
+
+def visible_len(html: str) -> int:
+    """Length of the text Telegram actually counts against its message limit.
+
+    Telegram's 4096-character limit applies to the VISIBLE text only; HTML tags
+    and — crucially — the ``href`` URL of a link entity do not count. Measuring
+    the raw HTML (with full ``t.me`` deep-link URLs) overcounts massively and
+    splits posts far too early. Stripping tags leaves the visible text; HTML
+    entities like ``&amp;`` are left expanded, which slightly overcounts and is
+    therefore safe (never under the real limit).
+    """
+    return len(_TAG_RE.sub("", html or ""))
+
+
+def expandable_quote(inner: str) -> str:
+    """Wrap pre-rendered inner HTML in a collapsed (expandable) blockquote."""
+    return f"<blockquote expandable>{inner}</blockquote>"
 
 
 def esc(text: Optional[str]) -> str:

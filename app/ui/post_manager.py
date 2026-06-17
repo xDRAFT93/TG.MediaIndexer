@@ -164,12 +164,12 @@ class PostManager:
     def _build_texts(self, media: Media, full_text: str) -> list[str]:
         message_limit = settings.tg_message_limit
         caption_limit = settings.tg_caption_limit
-        header_reserve = len(T.overflow_header(media, 999)) + 1
+        header_reserve = T.visible_len(T.overflow_header(media, 999)) + 1
         # The first chunk becomes a photo caption when a poster exists, so it is
         # bound by the (smaller) caption limit; otherwise the full message limit.
         first_limit = caption_limit if media.poster_url else message_limit
 
-        chunks = self._chunk_lines(full_text, first_limit, message_limit, header_reserve)
+        chunks = _chunk_units(full_text, first_limit, message_limit, header_reserve)
         texts: list[str] = []
         for index, body in enumerate(chunks):
             if index == 0:
@@ -178,39 +178,78 @@ class PostManager:
                 texts.append(f"{T.overflow_header(media, index)}\n{body}")
         return texts
 
-    @staticmethod
-    def _chunk_lines(full_text: str, first_limit: int, message_limit: int,
-                     header_reserve: int) -> list[str]:
-        overflow_budget = max(256, message_limit - header_reserve - 1)
-        wrap_limit = min(first_limit, overflow_budget)
 
-        # Hard-wrap only plain (tag-free) lines; a line containing an HTML tag
-        # (a link entry or the capped blockquote) is never split, since that
-        # would corrupt the markup. Such lines are short by construction.
-        wrapped: list[str] = []
-        for line in full_text.split("\n"):
-            if "<" in line or len(line) <= wrap_limit:
-                wrapped.append(line)
-                continue
-            while len(line) > wrap_limit:
-                wrapped.append(line[:wrap_limit])
-                line = line[wrap_limit:]
-            wrapped.append(line)
+# --------------------------------------------------------------------------- #
+# Splitting helpers (visible-length aware, blockquote-atomic)
+# --------------------------------------------------------------------------- #
+def _atomic_units(text: str) -> list[str]:
+    """Split text into units that must never be broken across posts.
 
-        chunks: list[str] = []
-        cur = ""
-        limit = first_limit
-        for line in wrapped:
-            if not cur:
-                cur = line
-                continue
-            candidate = f"{cur}\n{line}"
-            if len(candidate) <= limit:
-                cur = candidate
-            else:
-                chunks.append(cur)
-                cur = line
-                limit = overflow_budget
-        if cur or not chunks:
+    A blockquote spanning multiple physical lines is ONE unit, so a season's
+    collapsed episode list stays together with its header on the same post.
+    Every other physical line is its own unit.
+    """
+    units: list[str] = []
+    lines = text.split("\n")
+    i, n = 0, len(lines)
+    while i < n:
+        line = lines[i]
+        if "<blockquote" in line and "</blockquote>" not in line:
+            buf = [line]
+            i += 1
+            while i < n and "</blockquote>" not in lines[i]:
+                buf.append(lines[i])
+                i += 1
+            if i < n:
+                buf.append(lines[i])
+                i += 1
+            units.append("\n".join(buf))
+        else:
+            units.append(line)
+            i += 1
+    return units
+
+
+def _chunk_units(full_text: str, first_limit: int, message_limit: int,
+                 header_reserve: int) -> list[str]:
+    """Pack atomic units into posts by VISIBLE length.
+
+    Telegram counts only visible text against its limit; link URLs and tags do
+    not count. Measuring visible length (not raw HTML) is what lets a post hold
+    far more linked episodes than the old byte-based estimate allowed.
+    """
+    overflow_budget = max(256, message_limit - header_reserve - 1)
+    units = _atomic_units(full_text)
+
+    # Hard-wrap a plain (tag-free) unit that alone exceeds the budget; tagged
+    # units (links / blockquotes) are kept intact and are bounded by the card.
+    prepared: list[str] = []
+    for u in units:
+        if "<" not in u and T.visible_len(u) > overflow_budget:
+            s = u
+            while T.visible_len(s) > overflow_budget:
+                prepared.append(s[:overflow_budget])
+                s = s[overflow_budget:]
+            prepared.append(s)
+        else:
+            prepared.append(u)
+
+    chunks: list[str] = []
+    cur = ""
+    cur_vis = 0
+    limit = first_limit
+    for u in prepared:
+        uvis = T.visible_len(u)
+        if not cur:
+            cur, cur_vis = u, uvis
+            continue
+        if cur_vis + 1 + uvis <= limit:
+            cur = f"{cur}\n{u}"
+            cur_vis += 1 + uvis
+        else:
             chunks.append(cur)
-        return chunks
+            cur, cur_vis = u, uvis
+            limit = overflow_budget
+    if cur or not chunks:
+        chunks.append(cur)
+    return chunks

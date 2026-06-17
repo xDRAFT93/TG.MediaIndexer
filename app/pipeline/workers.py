@@ -183,6 +183,12 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
 
     det = classify(event.file_name, event.caption, event.message_text)
 
+    # Files coming from a configured anime topic are anime: bias the type so the
+    # resolver tries the anime providers (Jikan/AniList/Kitsu) before TMDb/OMDb.
+    if event.thread_id in settings.anime_source_threads:
+        det.media_type = MediaType.ANIME
+        det.anime_signal = True
+
     if not det.has_title and not det.only_episode:
         await PendingRepository.add(event, "no title and no episode")
         await EventRepository.set_stage(event_id, EventStage.PENDING.value,
