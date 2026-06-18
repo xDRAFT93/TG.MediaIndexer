@@ -212,13 +212,16 @@ def _atomic_units(text: str) -> list[str]:
 
 def _chunk_units(full_text: str, first_limit: int, message_limit: int,
                  header_reserve: int) -> list[str]:
-    """Pack atomic units into posts by VISIBLE length.
+    """Pack atomic units into posts by VISIBLE length AND entity count.
 
-    Telegram counts only visible text against its limit; link URLs and tags do
-    not count. Measuring visible length (not raw HTML) is what lets a post hold
-    far more linked episodes than the old byte-based estimate allowed.
+    Telegram counts only visible text against its length limit (link URLs and
+    tags do not count), and it drops formatting beyond ~100 entities per
+    message. A post must therefore respect both budgets, or the overflow
+    (further episode links and the footer) silently degrades to plain text.
     """
     overflow_budget = max(256, message_limit - header_reserve - 1)
+    # Reserve a couple of entities for the overflow header link added per post.
+    max_entities = max(8, settings.tg_max_entities - 2)
     units = _atomic_units(full_text)
 
     # Hard-wrap a plain (tag-free) unit that alone exceeds the budget; tagged
@@ -237,18 +240,21 @@ def _chunk_units(full_text: str, first_limit: int, message_limit: int,
     chunks: list[str] = []
     cur = ""
     cur_vis = 0
+    cur_ent = 0
     limit = first_limit
     for u in prepared:
         uvis = T.visible_len(u)
+        uent = T.entity_count(u)
         if not cur:
-            cur, cur_vis = u, uvis
+            cur, cur_vis, cur_ent = u, uvis, uent
             continue
-        if cur_vis + 1 + uvis <= limit:
+        if cur_vis + 1 + uvis <= limit and cur_ent + uent <= max_entities:
             cur = f"{cur}\n{u}"
             cur_vis += 1 + uvis
+            cur_ent += uent
         else:
             chunks.append(cur)
-            cur, cur_vis = u, uvis
+            cur, cur_vis, cur_ent = u, uvis, uent
             limit = overflow_budget
     if cur or not chunks:
         chunks.append(cur)

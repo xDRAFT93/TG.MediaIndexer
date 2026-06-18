@@ -88,6 +88,9 @@ class Settings:
     # ---- UI / posting ----
     tg_message_limit: int = field(default_factory=lambda: _int("TG_MESSAGE_LIMIT", 3900))
     tg_caption_limit: int = field(default_factory=lambda: _int("TG_CAPTION_LIMIT", 1024))
+    # Telegram drops formatting beyond ~100 entities (links/bold/blockquotes) per
+    # message, turning the rest into plain text. Keep a safe margin under that.
+    tg_max_entities: int = field(default_factory=lambda: _int("TG_MAX_ENTITIES", 90))
     overview_max_chars: int = field(default_factory=lambda: _int("OVERVIEW_MAX_CHARS", 600))
     episodes_full_limit: int = field(default_factory=lambda: _int("EPISODES_FULL_LIMIT", 20))
     episodes_block_limit: int = field(default_factory=lambda: _int("EPISODES_BLOCK_LIMIT", 100))

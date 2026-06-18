@@ -106,7 +106,8 @@ def _episode_token(ep: Episode) -> str:
     token = T.link(_release_link(rels[0]), code)
     for i, r in enumerate(rels[1:], start=2):
         label = r.quality or f"v{i}"
-        token += T.link(_release_link(r), f"[{label}]")
+        # A leading space keeps the version tag separately tappable from E01.
+        token += " " + T.link(_release_link(r), f"[{label}]")
     return token
 
 
@@ -132,19 +133,26 @@ def _episode_blocks(by_season, seasons) -> list[str]:
     return blocks
 
 
-def _pack_by_visible(items, budget: int, header_reserve: int):
-    """Greedily group (key, html) items so each group's visible length (plus a
-    header reserve) fits ``budget``. Yields (group, is_multi)."""
+def _pack_by_visible(items, budget: int, header_reserve: int,
+                     base_entities: int = 2):
+    """Greedily group (key, html) items so each group fits within BOTH limits:
+    the visible-text budget (plus a header reserve) AND Telegram's per-message
+    entity cap. ``base_entities`` accounts for the wrapper the group will get
+    (a blockquote + a bold header = 2). Yields (group, is_multi)."""
+    max_entities = max(8, settings.tg_max_entities - 2)  # leave room for overflow header
     groups: list[list] = []
     cur: list = []
     cur_vis = header_reserve
+    cur_ent = base_entities
     for key, html in items:
-        add = T.visible_len(html) + 1  # +1 for the newline
-        if cur and cur_vis + add > budget:
+        add_vis = T.visible_len(html) + 1  # +1 for the separator
+        add_ent = T.entity_count(html)
+        if cur and (cur_vis + add_vis > budget or cur_ent + add_ent > max_entities):
             groups.append(cur)
-            cur, cur_vis = [], header_reserve
+            cur, cur_vis, cur_ent = [], header_reserve, base_entities
         cur.append((key, html))
-        cur_vis += add
+        cur_vis += add_vis
+        cur_ent += add_ent
     if cur:
         groups.append(cur)
     multi = len(groups) > 1

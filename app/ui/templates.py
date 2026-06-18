@@ -33,6 +33,7 @@ EMOJI_SOURCE = "\U0001F517"    # 🔗
 EMOJI_CONT = "\u27A1\uFE0F"    # ➡️
 
 _TAG_RE = _re.compile(r"<[^>]+>")
+_ENTITY_RE = _re.compile(r"<(a|b|strong|i|em|u|ins|s|strike|del|code|pre|blockquote|tg-spoiler)\b", _re.I)
 
 
 def visible_len(html: str) -> int:
@@ -46,6 +47,17 @@ def visible_len(html: str) -> int:
     therefore safe (never under the real limit).
     """
     return len(_TAG_RE.sub("", html or ""))
+
+
+def entity_count(html: str) -> int:
+    """Number of Telegram message entities the HTML will produce.
+
+    Each opening formatting tag (``<a>``, ``<b>``, ``<blockquote>`` …) becomes
+    one ``MessageEntity``. Telegram silently drops entities beyond ~100 per
+    message, so the renderer must keep a single post under that budget or the
+    overflow (episode links AND the footer) degrades to plain text.
+    """
+    return len(_ENTITY_RE.findall(html or ""))
 
 
 def expandable_quote(inner: str) -> str:

@@ -307,3 +307,18 @@ erst danach TMDb/OMDb – unabhängig davon, wie der Dateiname aussieht.
 - **Ohne Provider-Treffer:** Die Zusammenfassungszeile „🎞️ Episoden: N in M
   Staffel(n)" wird bei unaufgelösten Einträgen weggelassen (die Staffel-Blöcke
   bleiben).
+
+## Sehr große Serien: Telegram-Entity-Limit
+
+Telegram erlaubt nur ~100 Formatierungs-**Entities** (jeder Link, jedes Fett,
+jedes Blockquote = 1 Entity) pro Nachricht und stellt alles darüber als
+**Klartext** dar – bei sehr großen Serien kippten so ab einem Punkt die
+Episoden-Links und der Footer (Quellen/TMDb) in unformatierten Text.
+
+Der Renderer begrenzt jetzt die Entity-Zahl **pro Staffel-Block** und **pro Post**
+(`TG_MAX_ENTITIES`, Standard 90). Ein Post nimmt nur so viele Staffel-Blöcke auf,
+wie unter dem Limit bleiben; der Rest wandert in den nächsten Zweigpost. Dadurch
+bleibt das gewünschte Format (zugeklappte Zitate, verlinkte Episoden, verlinkter
+Footer) auch bei 200+ Episoden vollständig erhalten – es entstehen lediglich ein
+paar Posts mehr. Mehrfachversions-Tags stehen mit Leerzeichen (`E01 [720p]`),
+damit sie getrennt antippbar sind.
