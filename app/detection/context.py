@@ -8,6 +8,7 @@ All state lives in MongoDB (thread_state); there is no RAM-only context.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -44,11 +45,30 @@ def decide(st: ThreadState, det: Detection) -> ContextDecision:
         )
         if same:
             season = det.episode.season or st.season_cursor or 1
+            # No explicit episode number on a same-series file -> continue the
+            # running count so repeats don't all collapse onto episode 1.
+            episode = det.episode.episode or next_sequential_episode(st)
             return ContextDecision(
                 action=ACTION_SAME_MEDIA,
                 media_id=st.active_media_id,
                 season=season,
-                episode=det.episode.episode,
+                episode=episode,
+            )
+        # Loose-series grouping: a run of UNRESOLVED entries whose titles reduce
+        # to the same stem once a leading/trailing episode number is removed
+        # ("ida rogalski 1", "ida rogalski 10", …) almost certainly are episodes
+        # of one series the provider didn't recognise. Bind them into the active
+        # (unresolved) entry instead of spawning one entry per file. Gated on the
+        # active media being unresolved so real, matched sequels stay separate.
+        if (st.active_media_id and not st.active_resolved
+                and _same_loose_series(det.title, st.active_title)):
+            season = det.episode.season or st.season_cursor or 1
+            episode = det.episode.episode or next_sequential_episode(st)
+            return ContextDecision(
+                action=ACTION_SAME_MEDIA,
+                media_id=st.active_media_id,
+                season=season,
+                episode=episode,
             )
         # New / switched media. Episode (if any) belongs to the new media.
         return ContextDecision(
@@ -91,11 +111,12 @@ def decide(st: ThreadState, det: Detection) -> ContextDecision:
 
 
 async def activate(st: ThreadState, media_id: str, title: str,
-                   media_type: MediaType) -> None:
+                   media_type: MediaType, resolved: bool = False) -> None:
     """Set the active media for the thread (resets episode cursors)."""
     st.active_media_id = media_id
     st.active_title = title
     st.active_media_type = media_type.value
+    st.active_resolved = resolved
     st.pending_title = ""        # provisional context consumed
     st.pending_type = ""
     st.episode_cursor = 0
@@ -128,3 +149,25 @@ async def note_episode(st: ThreadState, season: Optional[int],
 def next_sequential_episode(st: ThreadState) -> int:
     """For binding episodes that lack an explicit number: continue counting."""
     return st.episode_cursor + 1
+
+
+_LEAD_NUM_RE = re.compile(r"^[\(\[]?\d+[\)\]\.\:\-\s]+")
+_TRAIL_NUM_RE = re.compile(r"[\s\-\.\:]+\(?\d+\)?\s*$")
+
+
+def _series_stem(title: str) -> str:
+    """Reduce a title to its series stem by removing a leading or trailing
+    episode number ("ida rogalski 10" -> "ida rogalski", "07 Titel" -> "titel").
+    """
+    t = (title or "").strip().lower()
+    t = _LEAD_NUM_RE.sub("", t)
+    t = _TRAIL_NUM_RE.sub("", t)
+    return re.sub(r"\s+", " ", t).strip()
+
+
+def _same_loose_series(a: str, b: str) -> bool:
+    """True if two titles reduce to the same, non-trivial series stem. Used only
+    for unresolved entries, where identical stems would dedup anyway; grouping
+    additionally keeps them as sequential episodes rather than overwrites."""
+    sa, sb = _series_stem(a), _series_stem(b)
+    return bool(sa) and len(sa) >= 3 and sa == sb

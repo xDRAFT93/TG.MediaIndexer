@@ -322,3 +322,76 @@ bleibt das gewünschte Format (zugeklappte Zitate, verlinkte Episoden, verlinkte
 Footer) auch bei 200+ Episoden vollständig erhalten – es entstehen lediglich ein
 paar Posts mehr. Mehrfachversions-Tags stehen mit Leerzeichen (`E01 [720p]`),
 damit sie getrennt antippbar sind.
+
+## Weitere Robustheit & Befehle (dieser Stand)
+
+**Episoden-Links (Anime/Serien):** Episoden bekommen jetzt auch dann einen
+anklickbaren Link, wenn die Quelldatei **ohne Dateinamen** gepostet wurde (häufig
+bei Anime-Videos). Vorher entstand mangels Dateiname kein Release und die Folge
+wurde als reiner, nicht klickbarer Text dargestellt.
+
+**Footer:** Bei genau einer Quelle steht unten „🔗 Quelle" (Singular) mit dem
+Link direkt im Wort statt „Quellen: 1".
+
+**Führende Episodennummern:** zusätzlich erkannt werden `04.01` (= Staffel 4,
+Folge 1) und nullgepolsterte Nummern wie `044` (= Folge 44). Reine Filmtitel wie
+`300` oder `1917` bleiben unberührt.
+
+**Sequenz-Gruppierung:** Aufeinanderfolgende **unaufgelöste** Einträge, deren
+Titel nach Entfernen einer führenden/abschließenden Nummer denselben Stamm haben
+(`ida rogalski 1` … `ida rogalski 10`), werden als fortlaufende Episoden EINES
+Eintrags gebunden statt einzeln gepostet. Aufgelöste Reihen (echte Sequels) bleiben
+getrennt.
+
+**Anime-Titelsuche:** strengere Schwelle (`ANIME_MATCH_THRESHOLD`, Standard 88).
+Schwache Anime-Teiltreffer werden **verworfen** (kein falscher Titel/Poster) — der
+Eintrag bleibt lieber unaufgelöst, als falsch zu sein.
+
+**Loop-/Hänger-Fallback:** Wird dieselbe Media in kurzer Zeit zu oft neu
+verarbeitet (`UPDATE_LOOP_MAX`) oder schlägt zu oft fehl (`UPDATE_FAIL_MAX`),
+wandert sie in Quarantäne und wird übersprungen; jeder Sync hat ein hartes
+Timeout (`UPDATE_SYNC_TIMEOUT`). Das bricht den in der Praxis beobachteten
+Post→Lösch→Post-Loop.
+
+### Neue Owner-Befehle
+- `.reindex` — rendert **alle** Einträge mit den aktuellen Anzeige-Regeln neu
+  (Entity-Limits, Footer, Links). Arbeitet auf den gespeicherten Daten; führt
+  keine erneute Erkennung der Altdateien durch. Für erneutes Auflösen
+  Unaufgelöster zusätzlich `.repair`.
+- `.prune` — prüft pro Eintrag die Quell-Links gegen Telegram und entfernt tote
+  Releases/Quellen; Einträge ohne überlebende Quelle werden samt Zielpost
+  gelöscht. Sicher: was nicht eindeutig als gelöscht bestätigt ist (Fehler/keine
+  ID), bleibt erhalten.
+
+## Hörbücher (deutscher Fokus, TMDb-artiger Buch-Indexer)
+
+MediaIndexer erkennt und katalogisiert jetzt auch **Hörbücher** — nahtlos in
+derselben Datenbank-/Provider-Struktur wie Filme/Serien/Anime.
+
+**Erkennung:** automatisch über Audio-Endungen (`.mp3`, `.m4a`, `.m4b`, `.flac`,
+…) oder deutsche Schlüsselwörter (Hörbuch, Hörspiel, ungekürzt, „gelesen von",
+…) — im Dateinamen, mit Rückfall auf den Telegram-Post-Text wie bei Filmen.
+Mehrteilige Hörbücher (Teil 1, Teil 2, CD1 …) werden als Dateien EINES Eintrags
+zusammengefasst (wie Film-Releases), nicht als TV-Episoden.
+
+**Provider-Kette (für Hörbücher):** Audnexus (primär, per Audible-ASIN aus dem
+Dateinamen) → Google Books → Deutsche Nationalbibliothek (DNB, SRU/Dublin Core,
+deutscher Fokus) → Open Library. Kein API-Key nötig (Google Books optional über
+`GOOGLE_BOOKS_API_KEY` für höheres Limit). Schwache Treffer unter
+`AUDIOBOOK_MATCH_THRESHOLD` bleiben unaufgelöst statt falsch. Metadaten werden
+wie bei den anderen Providern lokal gecacht; Duplikate werden über denselben
+canonical-key-Mechanismus vermieden. Im Zielpost erscheinen **Autor** und
+**Sprecher** plus ein Provider-Link (Audible/DNB/…).
+
+### Eigene Threads steuern (ENV)
+- `AUDIOBOOK_SOURCE_THREAD_IDS` — Dateien aus diesen Topics werden als Hörbücher
+  behandelt (eigene Provider-Suche), analog zu `ANIME_SOURCE_THREAD_IDS`.
+- `IGNORE_THREAD_IDS` — Topics, die **komplett ignoriert** werden: daraus
+  entstehen keine Einträge.
+
+### Nachträgliche Korrektur
+- `.repair` löst unaufgelöste Hörbücher gegen die Buch-Provider neu auf (nutzt
+  den gespeicherten Medientyp; Autor/Sprecher werden ergänzt).
+- `.reindex` rendert alle Einträge mit aktuellen Regeln neu **und entfernt
+  Einträge, deren Quellen inzwischen alle in einem ignorierten Thread liegen**.
+- `.prune` entfernt tote Quell-Links auch bei Hörbüchern.

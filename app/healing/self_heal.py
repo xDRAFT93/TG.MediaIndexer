@@ -98,6 +98,8 @@ async def _reresolve_metadata(summary: dict) -> None:
             release_date=meta.release_date,
             runtime=meta.runtime,
             poster_url=meta.poster_url,
+            authors=list(getattr(meta, "authors", []) or []),
+            narrator=getattr(meta, "narrator", "") or "",
             providers={meta.provider: meta.external_id} if meta.external_id else {},
             provider_used=result.provider,
             metadata_resolved=result.matched,

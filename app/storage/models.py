@@ -17,6 +17,7 @@ class MediaType(str, Enum):
     FILM = "film"
     SERIES = "series"
     ANIME = "anime"
+    AUDIOBOOK = "audiobook"
 
     @classmethod
     def coerce(cls, value: Any) -> "MediaType":
@@ -158,6 +159,9 @@ class Media:
     release_date: str = ""
     runtime: Optional[int] = None
     poster_url: str = ""
+    # Audiobook-specific (empty for film/series/anime).
+    authors: list[str] = field(default_factory=list)
+    narrator: str = ""
     tags: list[str] = field(default_factory=list)
     providers: dict[str, str] = field(default_factory=dict)   # provider -> external id
     provider_used: str = ""
@@ -196,6 +200,8 @@ class Media:
             release_date=d.get("release_date", ""),
             runtime=d.get("runtime"),
             poster_url=d.get("poster_url", ""),
+            authors=list(d.get("authors", []) or []),
+            narrator=d.get("narrator", "") or "",
             tags=list(d.get("tags", [])),
             providers=dict(d.get("providers", {})),
             provider_used=d.get("provider_used", ""),
@@ -253,6 +259,7 @@ class ThreadState:
     active_media_id: str = ""
     active_title: str = ""
     active_media_type: str = ""
+    active_resolved: bool = False   # whether the active media has provider metadata
     # Provisional context from a file-less announcement (image + title) that may
     # not yet have a media entry. The first real file in the thread uses it to
     # create the single correct entry and bind to it.
@@ -280,6 +287,7 @@ class ThreadState:
             active_media_id=d.get("active_media_id", ""),
             active_title=d.get("active_title", ""),
             active_media_type=d.get("active_media_type", ""),
+            active_resolved=d.get("active_resolved", False),
             pending_title=d.get("pending_title", ""),
             pending_type=d.get("pending_type", ""),
             episode_cursor=d.get("episode_cursor", 0),

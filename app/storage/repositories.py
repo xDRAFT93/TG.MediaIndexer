@@ -166,6 +166,30 @@ class MediaRepository:
         return await db()[cls.coll].count_documents({})
 
     @classmethod
+    async def all_ids(cls) -> list[str]:
+        """Every media id, for full-catalog operations (.reindex / .prune)."""
+        cur = db()[cls.coll].find({}, {"_id": 1})
+        return [d["_id"] async for d in cur]
+
+    @classmethod
+    async def set_sources(cls, media_id: str, sources: list[dict]) -> None:
+        await db()[cls.coll].update_one(
+            {"_id": media_id},
+            {"$set": {"sources": sources, "ui_dirty": True, "updated_at": now_utc()}},
+        )
+
+    @classmethod
+    async def set_film_releases(cls, media_id: str, releases: list[dict]) -> None:
+        await db()[cls.coll].update_one(
+            {"_id": media_id},
+            {"$set": {"releases": releases, "ui_dirty": True, "updated_at": now_utc()}},
+        )
+
+    @classmethod
+    async def delete(cls, media_id: str) -> None:
+        await db()[cls.coll].delete_one({"_id": media_id})
+
+    @classmethod
     async def set_root_post(cls, media_id: str, post_id: str) -> None:
         await db()[cls.coll].update_one({"_id": media_id}, {"$set": {"root_post_id": post_id}})
 
@@ -241,6 +265,17 @@ class EpisodeRepository:
                 "updated_at": now_utc(),
             }},
         )
+
+    @classmethod
+    async def set_releases(cls, episode_id: str, releases: list[dict]) -> None:
+        await db()[cls.coll].update_one(
+            {"_id": episode_id},
+            {"$set": {"releases": releases, "updated_at": now_utc()}},
+        )
+
+    @classmethod
+    async def delete(cls, episode_id: str) -> None:
+        await db()[cls.coll].delete_one({"_id": episode_id})
 
 
 # --------------------------------------------------------------------------- #

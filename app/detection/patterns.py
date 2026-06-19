@@ -14,6 +14,21 @@ VIDEO_EXTENSIONS = {
     "mpeg", "webm", "ogm", "vob", "iso", "rmvb", "divx",
 }
 
+# Audio container extensions -> a file with one of these is treated as an
+# audiobook in this catalog (music is not indexed here).
+AUDIO_EXTENSIONS = {
+    "mp3", "m4a", "m4b", "aac", "flac", "ogg", "oga", "opus", "wma", "m4p",
+    "alac", "ape", "wav",
+}
+
+# German (and a few English) audiobook signal words. A match anywhere in the
+# file name or post text marks the item as an audiobook even without an audio
+# extension (e.g. a multi-file release described only in the caption).
+AUDIOBOOK_KEYWORDS_RE = re.compile(
+    r"(?i)\b(h[oö]rbuch|h[oö]rspiel|ungek[uü]rzt|gek[uü]rzt|lesung|gelesen\s+von|"
+    r"gesprochen\s+von|vorgelesen|audiobook|audio\s?book|h[oö]rbuchfassung)\b"
+)
+
 # Pure noise tokens removed from any title candidate (lowercase compare).
 RELEASE_TOKENS = {
     # resolution / quality
@@ -76,6 +91,9 @@ SEASON_EPISODE_RES: list[re.Pattern] = [
                r"(?:season|staffel)[ ._-]*(?P<season>\d{1,2})\b"),
     # S1-05 (season then bare episode after dash)
     re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._]*[-–][ ._]*(?P<episode>\d{1,3})(?![0-9])\b"),
+    # Leading "04.01" / "04x01" style = Season 04, Episode 01 (episode is 2 digits
+    # so a plain decimal like "1.5" is not captured). Anchored to the start.
+    re.compile(r"^(?P<season>\d{1,2})[._](?P<episode>\d{2})(?=[ ._-]|$)"),
 ]
 
 EPISODE_ONLY_RES: list[re.Pattern] = [
@@ -91,6 +109,10 @@ EPISODE_ONLY_RES: list[re.Pattern] = [
     re.compile(r"(?:^|[\]\)\s])[-–][ ]?(?P<episode>\d{1,3})(?:v\d)?(?=[ \[\(.]|$)"),
     # Leading bare episode number in list style: "16 - Title" / "16. Title".
     re.compile(r"^[\[\(]?(?P<episode>\d{1,3})[\]\)]?[ ._]*[-–.][ ._]+(?=\S)"),
+    # Leading ZERO-PADDED number ("044 Titel", "007 ..."). A leading zero marks a
+    # track/episode number, so this is safe where a bare "300" is not. int()
+    # collapses the padding ("044" -> 44).
+    re.compile(r"^(?P<episode>0\d{1,3})(?=[ ._/-]|$)"),
     # Weakest: a 1-2 digit number, space(s), then a word — "4 Ausgebrannt ...".
     # Requires a real space so dotted names ("300.2006", "24.mkv") are unaffected;
     # capped at 2 digits so "300"/"1917" stay films. In a non-series thread an

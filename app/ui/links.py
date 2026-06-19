@@ -50,6 +50,10 @@ _PROVIDER_LABEL = {
     "jikan": "MyAnimeList",
     "anilist": "AniList",
     "kitsu": "Kitsu",
+    "audnexus": "Audible",
+    "googlebooks": "Google Books",
+    "dnb": "DNB",
+    "openlibrary": "Open Library",
 }
 
 
@@ -74,4 +78,12 @@ def provider_link(provider: str, external_id: str, media_type: MediaType) -> str
         return f"https://anilist.co/anime/{eid}"
     if p == "kitsu":
         return f"https://kitsu.io/anime/{eid}"
+    if p == "audnexus":  # external id is the Audible ASIN
+        return f"https://www.audible.de/pd/{eid}"
+    if p == "googlebooks":
+        return f"https://books.google.com/books?id={eid}"
+    if p == "dnb":
+        return f"https://d-nb.info/{eid}"
+    if p == "openlibrary":  # external id like "/works/OL123W"
+        return f"https://openlibrary.org{eid}" if eid.startswith("/") else f"https://openlibrary.org/{eid}"
     return ""

@@ -211,7 +211,12 @@ def _release_label(rel: Release) -> str:
 def _footer(media: Media) -> str:
     bits: list[str] = []
     if media.sources:
-        bits.append(f"{T.EMOJI_SOURCE} Quellen: {_sources_line(media.sources)}")
+        if len(media.sources) == 1:
+            # A single source reads "Quelle" with the word itself linked.
+            href = _source_href(media.sources[0])
+            bits.append(f"{T.EMOJI_SOURCE} {T.link(href, 'Quelle')}")
+        else:
+            bits.append(f"{T.EMOJI_SOURCE} Quellen: {_sources_line(media.sources)}")
     if media.provider_used:
         external_id = (media.providers or {}).get(media.provider_used, "")
         href = L.provider_link(media.provider_used, external_id, media.media_type)
@@ -219,18 +224,19 @@ def _footer(media: Media) -> str:
     return " \u00b7 ".join(bits)
 
 
+def _source_href(src) -> str:
+    d = src if isinstance(src, dict) else (src.to_dict() if hasattr(src, "to_dict") else {})
+    return L.tg_message_link(
+        d.get("chat_id"),
+        d.get("first_message_id") or d.get("last_message_id"),
+        d.get("thread_id"),
+    )
+
+
 def _sources_line(sources: list) -> str:
     """Render each source as a clickable index (1 2 3 …) linking back to its
     source thread/post; falls back to a plain number when not deep-linkable."""
     parts: list[str] = []
     for i, src in enumerate(sources, 1):
-        d = src if isinstance(src, dict) else (
-            src.to_dict() if hasattr(src, "to_dict") else {}
-        )
-        href = L.tg_message_link(
-            d.get("chat_id"),
-            d.get("first_message_id") or d.get("last_message_id"),
-            d.get("thread_id"),
-        )
-        parts.append(T.link(href, str(i)))
+        parts.append(T.link(_source_href(src), str(i)))
     return " ".join(parts)

@@ -16,6 +16,7 @@ from ..config import settings
 from .episodes import EpisodeInfo
 from ..storage.models import MediaType
 from .extractor import Extraction, extract_from_filename, extract_from_text
+from .patterns import AUDIO_EXTENSIONS, AUDIOBOOK_KEYWORDS_RE
 
 
 @dataclass
@@ -28,6 +29,7 @@ class Detection:
     episode: EpisodeInfo = field(default_factory=EpisodeInfo)
     tags: list[str] = field(default_factory=list)
     anime_signal: bool = False
+    audiobook_signal: bool = False
     confidence: float = 0.0
     title_source: str = ""
 
@@ -83,6 +85,11 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
     anime_by_tag = any(t == "anime" for t in tags)
     anime_signal = anime_signal or anime_by_tag
 
+    # Audiobook signal: an audio file extension, or an audiobook keyword anywhere
+    # in the file name / caption / post text. Audio always wins over the
+    # film/series/anime guess because those are video formats.
+    audiobook_signal = _is_audiobook(file_name, caption, message_text)
+
     has_marker = any(ex.has_own_marker for ex in extractions)
 
     # Series-title selection. The decisive rule: when an episode marker exists
@@ -107,7 +114,9 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
 
     if chosen is None:
         # No usable series title. With an episode -> bind to the thread context.
-        if episode.has_episode:
+        # An audiobook part ("Teil 2.mp3") binds to the active audiobook as an
+        # extra release (handled downstream), never as a TV episode.
+        if episode.has_episode and not audiobook_signal:
             return Detection(
                 has_title=False,
                 only_episode=True,
@@ -115,12 +124,26 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
                 year=year,
                 tags=tags,
                 anime_signal=anime_signal,
+                audiobook_signal=audiobook_signal,
                 confidence=0.5,
             )
+        if audiobook_signal and episode.has_episode:
+            # Audiobook part with no book title in this file -> bind as a part.
+            return Detection(
+                has_title=False,
+                only_episode=True,
+                episode=episode,
+                year=year,
+                tags=tags,
+                audiobook_signal=True,
+                media_type=MediaType.AUDIOBOOK,
+                confidence=0.45,
+            )
         return Detection(has_title=False, only_episode=False, year=year, tags=tags,
-                         anime_signal=anime_signal, confidence=0.0)
+                         anime_signal=anime_signal, audiobook_signal=audiobook_signal,
+                         confidence=0.0)
 
-    media_type, type_conf = _decide_type(chosen, episode, anime_signal)
+    media_type, type_conf = _decide_type(chosen, episode, anime_signal, audiobook_signal)
 
     base = _TITLE_SOURCE_WEIGHT.get(chosen.source_field, 0.5)
     confidence = base + (0.08 if year else 0.0)
@@ -135,15 +158,29 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
         episode=episode,
         tags=tags,
         anime_signal=anime_signal,
+        audiobook_signal=audiobook_signal,
         confidence=round(confidence, 3),
         title_source=chosen.source_field,
     )
 
 
 def _decide_type(chosen: Extraction, episode: EpisodeInfo,
-                 anime_signal: bool) -> tuple[MediaType, float]:
+                 anime_signal: bool, audiobook_signal: bool) -> tuple[MediaType, float]:
+    if audiobook_signal:
+        return MediaType.AUDIOBOOK, 0.85
     if anime_signal:
         return MediaType.ANIME, 0.85
     if episode.has_episode or episode.season is not None:
         return MediaType.SERIES, 0.75
     return MediaType.FILM, 0.6
+
+
+def _is_audiobook(file_name: str, caption: str, message_text: str) -> bool:
+    """An audio file extension or any audiobook keyword in the available text."""
+    fn = (file_name or "").lower()
+    if "." in fn:
+        ext = fn.rsplit(".", 1)[-1]
+        if ext in AUDIO_EXTENSIONS:
+            return True
+    blob = " ".join([file_name or "", caption or "", message_text or ""])
+    return bool(AUDIOBOOK_KEYWORDS_RE.search(blob))

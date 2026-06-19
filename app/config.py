@@ -72,6 +72,14 @@ class Settings:
     # ---- External metadata providers ----
     tmdb_api_key: str = field(default_factory=lambda: os.getenv("TMDB_API_KEY", ""))
     omdb_api_key: str = field(default_factory=lambda: os.getenv("OMDB_API_KEY", ""))
+    # ---- Audiobook (book) metadata providers ----
+    # Audnexus and the DNB/Open Library fallbacks need no key; Google Books works
+    # without a key but a key raises the rate limit.
+    google_books_api_key: str = field(default_factory=lambda: os.getenv("GOOGLE_BOOKS_API_KEY", ""))
+    audnexus_region: str = field(default_factory=lambda: os.getenv("AUDNEXUS_REGION", "de"))
+    books_language: str = field(default_factory=lambda: os.getenv("BOOKS_LANGUAGE", "de"))
+    audiobook_match_threshold: int = field(
+        default_factory=lambda: _int("AUDIOBOOK_MATCH_THRESHOLD", 75))
     mal_client_id: str = field(default_factory=lambda: os.getenv("MAL_CLIENT_ID", ""))
     tmdb_language: str = field(default_factory=lambda: os.getenv("TMDB_LANGUAGE", "de-DE"))
     provider_cache_ttl_days: int = field(default_factory=lambda: _int("PROVIDER_CACHE_TTL_DAYS", 30))
@@ -83,6 +91,10 @@ class Settings:
     recent_events_keep: int = field(default_factory=lambda: _int("RECENT_EVENTS_KEEP", 50))
     title_match_threshold: int = field(default_factory=lambda: _int("TITLE_MATCH_THRESHOLD", 86))
     provider_match_threshold: int = field(default_factory=lambda: _int("PROVIDER_MATCH_THRESHOLD", 78))
+    # Anime titles are short and collide easily, so a wrong match is worse than
+    # none. Require a clearly stronger similarity before accepting / applying any
+    # anime metadata.
+    anime_match_threshold: int = field(default_factory=lambda: _int("ANIME_MATCH_THRESHOLD", 88))
     classify_min_confidence: float = field(default_factory=lambda: _float("CLASSIFY_MIN_CONFIDENCE", 0.45))
 
     # ---- UI / posting ----
@@ -91,6 +103,11 @@ class Settings:
     # Telegram drops formatting beyond ~100 entities (links/bold/blockquotes) per
     # message, turning the rest into plain text. Keep a safe margin under that.
     tg_max_entities: int = field(default_factory=lambda: _int("TG_MAX_ENTITIES", 90))
+    # Robustness guards for the update worker (break post/delete loops & hangs).
+    update_loop_max: int = field(default_factory=lambda: _int("UPDATE_LOOP_MAX", 6))
+    update_fail_max: int = field(default_factory=lambda: _int("UPDATE_FAIL_MAX", 3))
+    update_sync_timeout: float = field(
+        default_factory=lambda: _float("UPDATE_SYNC_TIMEOUT", 120.0))
     overview_max_chars: int = field(default_factory=lambda: _int("OVERVIEW_MAX_CHARS", 600))
     episodes_full_limit: int = field(default_factory=lambda: _int("EPISODES_FULL_LIMIT", 20))
     episodes_block_limit: int = field(default_factory=lambda: _int("EPISODES_BLOCK_LIMIT", 100))
@@ -117,6 +134,16 @@ class Settings:
     # anime providers (Jikan/AniList/Kitsu) BEFORE TMDb/OMDb. Comma-separated.
     anime_source_threads: list[int] = field(
         default_factory=lambda: _csv_int("ANIME_SOURCE_THREAD_IDS"))
+    # Files from these topics are treated as AUDIOBOOKS: the audiobook providers
+    # (Audnexus -> Google Books -> DNB -> Open Library) are tried instead of the
+    # film/series/anime ones. Comma-separated thread ids.
+    audiobook_source_threads: list[int] = field(
+        default_factory=lambda: _csv_int("AUDIOBOOK_SOURCE_THREAD_IDS"))
+    # Topics to ignore entirely: messages from these threads never create or
+    # update a catalog entry (e.g. an off-topic / chat / audiobook-dump thread you
+    # do not want indexed). Comma-separated thread ids.
+    ignore_thread_ids: list[int] = field(
+        default_factory=lambda: _csv_int("IGNORE_THREAD_IDS"))
 
     # When true, media without a successful provider match (metadata unresolved)
     # are NOT posted to the target thread. They stay catalogued in the database

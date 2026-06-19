@@ -13,6 +13,10 @@ Commands (default prefix ``.``):
                                  re-resolve unresolved, re-render dirty cards).
   .rebuild <query>               Force re-resolve + re-render of a media matched
                                  by title.
+  .reindex                       Re-render EVERY catalog entry with the current
+                                 display rules (entity limits, footer, links).
+  .prune                         Check every entry's source links and remove dead
+                                 ones; delete entries whose sources are all gone.
   .help                          Show this help.
 
 The import only enqueues events; the pipeline workers do the actual detection,
@@ -59,6 +63,10 @@ async def handle_command(event, body: str) -> None:
         await _cmd_repair(event)
     elif cmd in {"rebuild", "refresh"}:
         await _cmd_rebuild(event, args)
+    elif cmd in {"reindex", "reapply"}:
+        await _cmd_reindex(event)
+    elif cmd in {"prune", "cleanup"}:
+        await _cmd_prune(event)
     else:
         await event.reply(f"Unknown command: {cmd}\n\n{_help_text()}")
 
@@ -71,6 +79,8 @@ def _help_text() -> str:
         f"{p}status - show counts and queue sizes\n"
         f"{p}repair - run a self-healing cycle now\n"
         f"{p}rebuild <query> - re-resolve & re-render a media by title\n"
+        f"{p}reindex - re-render all entries with current display rules\n"
+        f"{p}prune - remove dead source links; delete emptied entries\n"
         f"{p}help - show this help"
     )
 
@@ -216,3 +226,77 @@ async def _cmd_rebuild(event, args: list[str]) -> None:
         await update_queue.put(media._id)
     names = ", ".join(f"{m.title} ({m.year or '?'})" for m in matches[:10])
     await event.reply(f"Queued {len(matches)} media for rebuild: {names}")
+
+
+async def _cmd_reindex(event) -> None:
+    """Re-render every catalog entry so old posts pick up the current display
+    rules (entity limits, singular 'Quelle', episode links, collapsed quotes).
+    This re-renders from stored data; it does not re-run detection on past files.
+    Use .repair to re-match unresolved entries against the providers.
+    """
+    ids = await MediaRepository.all_ids()
+    for media_id in ids:
+        await MediaRepository.mark_dirty(media_id)
+        await update_queue.put(media_id)
+    await event.reply(
+        f"Re-indexing {len(ids)} entries with the current display rules "
+        f"(re-rendering target posts). Run .repair to also re-match unresolved ones."
+    )
+
+
+async def _cmd_reindex(event) -> None:
+    """Re-render every catalog entry so old posts pick up the current display
+    rules (entity limits, singular 'Quelle', episode links, collapsed quotes).
+    Entries whose sources now all live in an ignored thread are removed. This
+    re-renders from stored data; it does not re-run detection on past files.
+    Use .repair to re-match unresolved entries against the providers.
+    """
+    from ..healing.prune import _delete_media_fully
+    ids = await MediaRepository.all_ids()
+    removed = 0
+    rerendered = 0
+    for media_id in ids:
+        media = await MediaRepository.get(media_id)
+        if media is None:
+            continue
+        if _all_sources_ignored(media):
+            episodes = await EpisodeRepository.list_for_media(media_id)
+            await _delete_media_fully(event.client, media_id, episodes)
+            removed += 1
+            continue
+        await MediaRepository.mark_dirty(media_id)
+        await update_queue.put(media_id)
+        rerendered += 1
+    await event.reply(
+        f"Re-indexing {rerendered} entries with the current display rules; "
+        f"removed {removed} entry(ies) from ignored threads. "
+        f"Run .repair to also re-match unresolved ones."
+    )
+
+
+def _all_sources_ignored(media) -> bool:
+    """True if the media has sources and every one of them is in an ignored
+    thread (so it should no longer be catalogued)."""
+    if not media.sources or not settings.ignore_thread_ids:
+        return False
+    tids = set()
+    for s in media.sources:
+        d = s if isinstance(s, dict) else (s.to_dict() if hasattr(s, "to_dict") else {})
+        tids.add(d.get("thread_id"))
+    return bool(tids) and all(t in settings.ignore_thread_ids for t in tids)
+
+
+async def _cmd_prune(event) -> None:
+    """Check every entry's source links against Telegram and drop the dead ones;
+    delete entries whose sources have all disappeared."""
+    from ..healing.prune import run_prune
+    await event.reply("Pruning dead source links — checking every entry, this may take a while ...")
+    summary = await run_prune(event.client, update_queue.put_nowait)
+    await event.reply(
+        "Prune done.\n"
+        f"entries checked: {summary['checked']}\n"
+        f"entries pruned: {summary['media_pruned']}\n"
+        f"entries deleted (empty): {summary['media_deleted']}\n"
+        f"episodes deleted: {summary['episodes_deleted']}\n"
+        f"dead releases removed: {summary['releases_removed']}"
+    )

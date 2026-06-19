@@ -23,6 +23,8 @@ class MediaMetadata:
     release_date: str = ""
     runtime: Optional[int] = None
     poster_url: str = ""
+    authors: list[str] = field(default_factory=list)
+    narrator: str = ""
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
@@ -30,7 +32,9 @@ class MediaMetadata:
 
     @classmethod
     def from_dict(cls, d: dict) -> "MediaMetadata":
-        return cls(**{k: d.get(k) for k in cls.__dataclass_fields__})  # type: ignore[attr-defined]
+        # Only pass keys that are present so newly added fields fall back to their
+        # defaults for older cached entries instead of becoming None.
+        return cls(**{k: d[k] for k in cls.__dataclass_fields__ if k in d})  # type: ignore[attr-defined]
 
 
 class Provider:

@@ -31,6 +31,8 @@ EMOJI_EPISODES = "\U0001F39E\uFE0F"  # 🎞️
 EMOJI_RELEASES = "\U0001F4E6"  # 📦
 EMOJI_SOURCE = "\U0001F517"    # 🔗
 EMOJI_CONT = "\u27A1\uFE0F"    # ➡️
+EMOJI_AUTHOR = "\u270D\uFE0F"  # ✍️
+EMOJI_NARRATOR = "\U0001F3A7"  # 🎧
 
 _TAG_RE = _re.compile(r"<[^>]+>")
 _ENTITY_RE = _re.compile(r"<(a|b|strong|i|em|u|ins|s|strike|del|code|pre|blockquote|tg-spoiler)\b", _re.I)
@@ -127,6 +129,13 @@ def overview_block(media: Media, max_chars: Optional[int] = None) -> str:
 
 def metadata_block(media: Media) -> str:
     lines: list[str] = []
+    # Audiobook author / narrator first (the most identifying fields for a book).
+    authors = getattr(media, "authors", None) or []
+    if authors:
+        lines.append(f"{EMOJI_AUTHOR} Autor: {esc(', '.join(authors))}")
+    narrator = getattr(media, "narrator", "") or ""
+    if narrator:
+        lines.append(f"{EMOJI_NARRATOR} Sprecher: {esc(narrator)}")
     if media.genres:
         lines.append(f"{EMOJI_GENRES} Genres: {esc(', '.join(media.genres))}")
     if media.rating is not None:

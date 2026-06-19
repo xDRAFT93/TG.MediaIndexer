@@ -20,10 +20,14 @@ from typing import Optional
 import httpx
 
 from .anilist import AniListProvider
+from .audnexus import AudnexusProvider
 from .base import MediaMetadata, Provider
+from .dnb import DNBProvider
+from .googlebooks import GoogleBooksProvider
 from .jikan import JikanProvider
 from .kitsu import KitsuProvider
 from .omdb import OMDbProvider
+from .openlibrary import OpenLibraryProvider
 from .tmdb import TMDbProvider
 from ..config import settings
 from ..detection.confidence import title_similarity
@@ -64,12 +68,20 @@ class ProviderRegistry:
         jikan = JikanProvider(self.client)
         anilist = AniListProvider(self.client)
         kitsu = KitsuProvider(self.client)
+        audnexus = AudnexusProvider(self.client)
+        googlebooks = GoogleBooksProvider(self.client)
+        dnb = DNBProvider(self.client)
+        openlibrary = OpenLibraryProvider(self.client)
 
-        self._all: list[Provider] = [tmdb, omdb, jikan, anilist, kitsu]
+        self._all: list[Provider] = [tmdb, omdb, jikan, anilist, kitsu,
+                                     audnexus, googlebooks, dnb, openlibrary]
         self._chains: dict[MediaType, list[Provider]] = {
             MediaType.ANIME: [jikan, anilist, kitsu, tmdb, omdb],
             MediaType.SERIES: [tmdb, omdb],
             MediaType.FILM: [tmdb, omdb],
+            # Audnexus (ASIN) first, then title-searchable book sources, DNB for
+            # the German bias before the generic Open Library fallback.
+            MediaType.AUDIOBOOK: [audnexus, googlebooks, dnb, openlibrary],
         }
 
     def chain_for(self, media_type: MediaType) -> list[Provider]:
@@ -93,6 +105,10 @@ class ProviderRegistry:
             return ResolveResult(None, "", 0.0, False)
 
         threshold = settings.provider_match_threshold
+        if media_type == MediaType.ANIME:
+            threshold = settings.anime_match_threshold
+        elif media_type == MediaType.AUDIOBOOK:
+            threshold = settings.audiobook_match_threshold
         best: Optional[MediaMetadata] = None
         best_provider = ""
         best_score = -1.0
@@ -115,10 +131,16 @@ class ProviderRegistry:
             if score > best_score:
                 best, best_provider, best_score = meta, provider.name, score
 
-        if best is not None:
+        # For anime a weak "best" guess is more harmful than no data at all, so it
+        # is discarded entirely and the entry stays unresolved with its detected
+        # title. For film/series a partial best is kept (unresolved) as a hint.
+        if best is not None and media_type != MediaType.ANIME:
             log.info("No strong match for %r (best %.0f via %s); keeping partial.",
                      query, best_score, best_provider)
             return ResolveResult(best, best_provider, best_score, False)
+        if best is not None:
+            log.info("Anime %r below strict threshold (best %.0f via %s) — discarding.",
+                     query, best_score, best_provider)
         return ResolveResult(None, "", 0.0, False)
 
     async def aclose(self) -> None:
