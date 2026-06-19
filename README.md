@@ -374,14 +374,18 @@ derselben Datenbank-/Provider-Struktur wie Filme/Serien/Anime.
 Mehrteilige Hörbücher (Teil 1, Teil 2, CD1 …) werden als Dateien EINES Eintrags
 zusammengefasst (wie Film-Releases), nicht als TV-Episoden.
 
-**Provider-Kette (für Hörbücher):** Audnexus (primär, per Audible-ASIN aus dem
-Dateinamen) → Google Books → Deutsche Nationalbibliothek (DNB, SRU/Dublin Core,
-deutscher Fokus) → Open Library. Kein API-Key nötig (Google Books optional über
-`GOOGLE_BOOKS_API_KEY` für höheres Limit). Schwache Treffer unter
-`AUDIOBOOK_MATCH_THRESHOLD` bleiben unaufgelöst statt falsch. Metadaten werden
-wie bei den anderen Providern lokal gecacht; Duplikate werden über denselben
-canonical-key-Mechanismus vermieden. Im Zielpost erscheinen **Autor** und
-**Sprecher** plus ein Provider-Link (Audible/DNB/…).
+**Provider-Kette (für Hörbücher):** Audnexus (primär — sucht jetzt auch per
+**Titel/Dateiname** über den regionalen Audible-Katalog, nicht nur per ASIN:
+Katalog-Suche → ASIN → reiche Audnexus-Metadaten, mit Fallback auf die
+Katalogdaten) → Google Books → Deutsche Nationalbibliothek (DNB, SRU/Dublin Core,
+deutscher Fokus) → Open Library. Da Hörbuch-Dateinamen oft „Autor - Titel"
+enthalten, gleicht die Auflösung zusätzlich gegen „Autor + Titel" ab. Kein
+API-Key nötig (Google Books optional über `GOOGLE_BOOKS_API_KEY`). Schwache
+Treffer unter `AUDIOBOOK_MATCH_THRESHOLD` bleiben unaufgelöst statt falsch.
+Metadaten werden lokal gecacht; Duplikate über denselben canonical-key-Mechanismus
+vermieden. Hörbücher werden **wie Filme** dargestellt: Cover als Foto, Beschreibung
+im aufklappbaren Zitat, Datei-Links im Zitat, plus Autor/Sprecher und ein
+Provider-Link (Audible/DNB/…).
 
 ### Eigene Threads steuern (ENV)
 - `AUDIOBOOK_SOURCE_THREAD_IDS` — Dateien aus diesen Topics werden als Hörbücher
@@ -395,3 +399,26 @@ canonical-key-Mechanismus vermieden. Im Zielpost erscheinen **Autor** und
 - `.reindex` rendert alle Einträge mit aktuellen Regeln neu **und entfernt
   Einträge, deren Quellen inzwischen alle in einem ignorierten Thread liegen**.
 - `.prune` entfernt tote Quell-Links auch bei Hörbüchern.
+
+## Titel aus Post-Text, Archive & Trailer-Synonyme (dieser Stand)
+
+**Post-Text als Titelquelle:** Dateiname und der Telegram-Post-Text, mit dem die
+Datei gepostet wurde, sind nicht immer gleich. Der Indexer sammelt jetzt **alle**
+Titel-Kandidaten (Dateiname, Caption, Post-Text) und probiert sie der Reihe nach
+bei den Providern — ein kryptischer Dateiname wie `tmsf-eternalyou (2024)` wird
+so über den echten Titel im Post-Text (`eternal you – vom ende der endlichkeit
+2024`) aufgelöst. Bleibt ein Eintrag unaufgelöst, wird der aussagekräftigste
+Titel angezeigt (mehrwortiger Post-Text-Titel statt Dateiname-Kürzel). Alle
+Kandidaten werden als `search_aliases` gespeichert, damit **`.repair`** sie
+nachträglich erneut probieren kann (auch aus dem Post-Text, nicht nur dem
+gespeicherten Titel).
+
+**Archive ignorieren:** `IGNORE_ARCHIVE_FILES=true` (Standard) überspringt
+Archiv-Uploads (`.rar`, `.zip`, `.7z`, mehrteilige `.r00`/`.7z.001`/`.001` …), die
+sonst Müll-Einträge erzeugen. `.reindex` entfernt zusätzlich bestehende Einträge,
+deren Dateien ausschließlich Archive sind.
+
+**Trailer/Preview erkennen:** Neben „trailer" werden jetzt auch Teaser, Preview,
+Vorschau, Promo, Sample, Snippet und Ausschnitt im Post-Text als Trailer erkannt
+und ignoriert. Über `TRAILER_KEYWORDS` (komma-separiert) lassen sich weitere
+Begriffe ergänzen.

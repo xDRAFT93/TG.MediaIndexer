@@ -126,6 +126,15 @@ class ProviderRegistry:
             score = title_similarity(query, meta.title)
             if meta.original_title:
                 score = max(score, title_similarity(query, meta.original_title))
+            # Audiobook file names usually carry the author too ("Autor - Titel"),
+            # so also score the query against an author+title combination.
+            if media_type == MediaType.AUDIOBOOK and getattr(meta, "authors", None):
+                authors = " ".join(meta.authors)
+                score = max(
+                    score,
+                    title_similarity(query, f"{authors} {meta.title}"),
+                    title_similarity(query, f"{meta.title} {authors}"),
+                )
             if score >= threshold:
                 return ResolveResult(meta, provider.name, score, True)
             if score > best_score:

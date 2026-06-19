@@ -264,14 +264,31 @@ async def _cmd_reindex(event) -> None:
             await _delete_media_fully(event.client, media_id, episodes)
             removed += 1
             continue
+        if settings.ignore_archive_files and _all_releases_archives(media):
+            episodes = await EpisodeRepository.list_for_media(media_id)
+            await _delete_media_fully(event.client, media_id, episodes)
+            removed += 1
+            continue
         await MediaRepository.mark_dirty(media_id)
         await update_queue.put(media_id)
         rerendered += 1
     await event.reply(
         f"Re-indexing {rerendered} entries with the current display rules; "
-        f"removed {removed} entry(ies) from ignored threads. "
+        f"removed {removed} entry(ies) from ignored threads / archive uploads. "
         f"Run .repair to also re-match unresolved ones."
     )
+
+
+def _all_releases_archives(media) -> bool:
+    """True if the media has film releases and every one is an archive file."""
+    from ..pipeline.workers import is_archive_name
+    rels = media.releases or []
+    names = []
+    for r in rels:
+        n = r.get("file_name") if isinstance(r, dict) else getattr(r, "file_name", "")
+        if n:
+            names.append(n)
+    return bool(names) and all(is_archive_name(n) for n in names)
 
 
 def _all_sources_ignored(media) -> bool:

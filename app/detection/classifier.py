@@ -32,6 +32,10 @@ class Detection:
     audiobook_signal: bool = False
     confidence: float = 0.0
     title_source: str = ""
+    # All distinct title candidates (file name, caption, post text) in priority
+    # order, so resolution can fall back to the post text when the file-name
+    # title does not match a provider.
+    search_titles: list[str] = field(default_factory=list)
 
     @property
     def provider_query(self) -> str:
@@ -149,10 +153,23 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
     confidence = base + (0.08 if year else 0.0)
     confidence = min(1.0, confidence * (0.6 + 0.4 * type_conf))
 
+    # Collect every distinct title candidate (chosen first), so resolution can
+    # fall back from a cryptic file name ("tmsf-eternalyou") to the real title in
+    # the post text ("eternal you - vom ende der endlichkeit").
+    candidates: list[str] = []
+    for ex in [chosen] + [e for e in extractions if e is not chosen]:
+        t = (ex.title or "").strip()
+        if t and t.lower() not in {c.lower() for c in candidates}:
+            candidates.append(t)
+    # Display title: the most descriptive candidate (more real words wins). This
+    # keeps a clean post-text title over a junky file-name token even when the
+    # entry stays unresolved.
+    display = _best_display_title(candidates) if candidates else chosen.title
+
     return Detection(
         has_title=True,
         only_episode=False,
-        title=chosen.title,
+        title=display or chosen.title,
         year=year,
         media_type=media_type,
         episode=episode,
@@ -161,7 +178,26 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
         audiobook_signal=audiobook_signal,
         confidence=round(confidence, 3),
         title_source=chosen.source_field,
+        search_titles=candidates,
     )
+
+
+def _word_count(title: str) -> int:
+    """Number of whitespace-separated tokens that contain a letter."""
+    return sum(1 for tok in (title or "").split() if any(ch.isalpha() for ch in tok))
+
+
+def _best_display_title(candidates: list[str]) -> str:
+    """Pick the most title-like candidate. If the file-name title is a single
+    slug-like token ("tmsf-eternalyou") but the post text offers a real
+    multi-word title, prefer the latter; otherwise keep the file-name title."""
+    chosen = candidates[0]
+    if _word_count(chosen) >= 2:
+        return chosen
+    for c in candidates[1:]:
+        if _word_count(c) >= 2:
+            return c
+    return chosen
 
 
 def _decide_type(chosen: Extraction, episode: EpisodeInfo,

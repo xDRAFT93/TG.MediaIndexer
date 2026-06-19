@@ -79,11 +79,25 @@ async def _reresolve_metadata(summary: dict) -> None:
         return
     unresolved = await MediaRepository.find_unresolved()
     for media in unresolved:
-        query = media.title
-        if not query:
+        # Try the stored title AND every alternative query candidate (file name /
+        # caption / post text) so an entry whose file title never matched can be
+        # resolved from the post-text title on a later .repair.
+        queries: list[str] = []
+        for q in [media.title, *getattr(media, "search_aliases", [])]:
+            q = (q or "").strip()
+            if q and q.lower() not in {x.lower() for x in queries}:
+                queries.append(q)
+        if not queries:
             continue
-        result = await _registry.resolve(query, media.media_type, media.year)
-        if not result.found or result.metadata is None:
+        result = None
+        for q in queries:
+            r = await _registry.resolve(q, media.media_type, media.year)
+            if result is None and r.found:
+                result = r
+            if r.matched:
+                result = r
+                break
+        if result is None or not result.found or result.metadata is None:
             continue
         meta = result.metadata
         patch = Media(

@@ -95,6 +95,7 @@ class MediaRepository:
         for field_name in (
             "title", "original_title", "overview", "release_date",
             "poster_url", "rating", "votes", "runtime", "year", "provider_used",
+            "narrator",
         ):
             if prefer_incoming and n.get(field_name) not in (None, "", []):
                 merged[field_name] = n[field_name]
@@ -102,6 +103,14 @@ class MediaRepository:
                 merged[field_name] = _prefer(e.get(field_name), n.get(field_name))
         merged["genres"] = _merge_lists(e.get("genres", []), n.get("genres", []))
         merged["tags"] = _merge_lists(e.get("tags", []), n.get("tags", []))
+        # Authors: prefer freshly resolved, else keep whichever is non-empty.
+        if prefer_incoming and n.get("authors"):
+            merged["authors"] = n["authors"]
+        else:
+            merged["authors"] = e.get("authors") or n.get("authors", [])
+        # Search aliases accumulate so .repair has every candidate to try.
+        merged["search_aliases"] = _merge_lists(
+            e.get("search_aliases", []), n.get("search_aliases", []))
         merged["providers"] = {**n.get("providers", {}), **e.get("providers", {})}
         if prefer_incoming:
             merged["providers"] = {**e.get("providers", {}), **n.get("providers", {})}

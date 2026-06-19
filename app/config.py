@@ -50,6 +50,16 @@ def _csv_int(name: str) -> list[int]:
     return out
 
 
+def _csv_str(name: str) -> list[str]:
+    raw = os.getenv(name, "")
+    out: list[str] = []
+    for part in raw.replace(";", ",").split(","):
+        part = part.strip()
+        if part:
+            out.append(part)
+    return out
+
+
 @dataclass
 class Settings:
     # ---- Telegram (userbot / MTProto client API) ----
@@ -144,6 +154,14 @@ class Settings:
     # do not want indexed). Comma-separated thread ids.
     ignore_thread_ids: list[int] = field(
         default_factory=lambda: _csv_int("IGNORE_THREAD_IDS"))
+    # Skip archive uploads (rar/zip/7z/…) so multi-part archives don't create
+    # junk entries. Toggle via env.
+    ignore_archive_files: bool = field(
+        default_factory=lambda: _bool("IGNORE_ARCHIVE_FILES", True))
+    # Extra words (besides the built-in trailer/teaser/preview/…) that mark a
+    # video as a trailer/preview to ignore. Comma-separated.
+    trailer_keywords: list[str] = field(
+        default_factory=lambda: _csv_str("TRAILER_KEYWORDS"))
 
     # When true, media without a successful provider match (metadata unresolved)
     # are NOT posted to the target thread. They stay catalogued in the database

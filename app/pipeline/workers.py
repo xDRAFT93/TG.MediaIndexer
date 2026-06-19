@@ -123,17 +123,53 @@ def _has_media_file(event) -> bool:
     return event.media_type_raw in ("video", "document", "audio")
 
 
-_TRAILER_RE = re.compile(r"(?i)\btrailers?\b")
+_TRAILER_BASE = ["trailer", "teaser", "preview", "vorschau", "promo",
+                 "sample", "snippet", "ausschnitt"]
+_ARCHIVE_EXTENSIONS = {
+    "rar", "zip", "7z", "tar", "gz", "bz2", "xz", "tgz", "tbz2", "cab",
+    "arj", "ace", "lzh", "lha", "z",
+}
+# Split archive parts: foo.part01.rar (ext rar already covered), foo.r00/.r01,
+# foo.7z.001 / foo.zip.001, foo.001 (generic split).
+_ARCHIVE_PART_RE = re.compile(r"(?i)\.(r\d{2,3}|\d{3})$|\.(7z|zip|rar)\.\d{3}$")
+
+
+def _trailer_re() -> "re.Pattern":
+    words = list(_TRAILER_BASE) + [w.lower() for w in settings.trailer_keywords]
+    seen, uniq = set(), []
+    for w in words:
+        if w and w not in seen:
+            seen.add(w)
+            uniq.append(re.escape(w))
+    return re.compile(r"(?i)\b(" + "|".join(uniq) + r")s?\b")
 
 
 def _is_trailer(event) -> bool:
-    """True if the post text the video was shared with mentions a trailer.
+    """True if the post text the video was shared with marks it as a
+    trailer/preview/teaser/sample (built-in words plus TRAILER_KEYWORDS).
 
     The filename is intentionally NOT checked (release filenames can contain the
     word incidentally); only the human-written caption/message text counts.
     """
     text = f"{event.caption or ''} {event.message_text or ''}"
-    return bool(_TRAILER_RE.search(text))
+    return bool(_trailer_re().search(text))
+
+
+def is_archive_name(file_name: str) -> bool:
+    """True if a file name denotes a (possibly multi-part) archive."""
+    fn = (file_name or "").lower()
+    if not fn:
+        return False
+    if _ARCHIVE_PART_RE.search(fn):
+        return True
+    if "." in fn:
+        return fn.rsplit(".", 1)[-1] in _ARCHIVE_EXTENSIONS
+    return False
+
+
+def _is_archive(event) -> bool:
+    """True if the uploaded file is a (possibly multi-part) archive."""
+    return is_archive_name(event.file_name or "")
 
 
 # --------------------------------------------------------------------------- #
@@ -181,10 +217,16 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
         await EventRepository.set_stage(event_id, EventStage.IGNORED.value)
         return
 
-    # Trailers must never create or update a catalog entry. If the post text the
-    # video was shared with mentions "trailer", drop it: no entry, no post, no
-    # source tracking.
+    # Trailers/previews must never create or update a catalog entry. If the post
+    # text the video was shared with marks it as a trailer/preview/teaser/sample,
+    # drop it: no entry, no post, no source tracking.
     if _is_trailer(event):
+        await EventRepository.set_stage(event_id, EventStage.IGNORED.value)
+        return
+
+    # Archive uploads (rar/zip/7z, multi-part splits, …) are skipped when
+    # IGNORE_ARCHIVE_FILES is on, so they don't create junk entries.
+    if settings.ignore_archive_files and _is_archive(event):
         await EventRepository.set_stage(event_id, EventStage.IGNORED.value)
         return
 
@@ -285,19 +327,41 @@ async def _process_event(event_id: str, registry: ProviderRegistry) -> None:
 async def _create_media(decision, det: Detection,
                         registry: ProviderRegistry, fallback_query: str = "") -> Media:
     media_type = MediaType.coerce(decision.create_type)
-    query = decision.create_title
-    resolve: ResolveResult = await registry.resolve(query, media_type, decision.create_year)
 
-    if (not resolve.found and fallback_query
-            and slugify(fallback_query) != slugify(query)):
-        # The file's own title produced no provider match. Retry with the title
-        # from the preceding image+text announcement (only as a last resort, not
-        # as the normal path) so episodes whose filenames carry no clean series
-        # title still resolve to the right series.
-        alt = await registry.resolve(fallback_query, media_type, decision.create_year)
-        if alt.found:
-            log.info("Resolved '%s' via announcement fallback '%s'.", query, fallback_query)
-            resolve, query = alt, fallback_query
+    # Build an ordered, de-duplicated list of title queries to try: every
+    # candidate the detector found (file name, caption, post text) plus the
+    # announcement fallback. This is what lets a cryptic file name resolve via
+    # the real title in the Telegram post text.
+    raw_queries = list(getattr(det, "search_titles", None) or [])
+    raw_queries += [decision.create_title, fallback_query]
+    queries: list[str] = []
+    seen: set[str] = set()
+    for q in raw_queries:
+        q = (q or "").strip()
+        if q and slugify(q) not in seen:
+            seen.add(slugify(q))
+            queries.append(q)
+    if not queries:
+        queries = [decision.create_title or ""]
+
+    results: list[tuple[str, ResolveResult]] = []
+    matched: Optional[tuple[str, ResolveResult]] = None
+    for q in queries:
+        r = await registry.resolve(q, media_type, decision.create_year)
+        results.append((q, r))
+        if r.matched:
+            matched = (q, r)
+            break
+
+    if matched:
+        query, resolve = matched
+        if query != queries[0]:
+            log.info("Resolved via fallback title '%s' (file title '%s').",
+                     query, queries[0])
+    else:
+        # No strong match: keep the first partial (provider hint) if any.
+        partial = next(((q, r) for q, r in results if r.found), None)
+        query, resolve = partial if partial else results[0]
 
     if resolve.found and resolve.metadata is not None:
         meta = resolve.metadata
@@ -316,18 +380,21 @@ async def _create_media(decision, det: Detection,
             authors=list(getattr(meta, "authors", []) or []),
             narrator=getattr(meta, "narrator", "") or "",
             tags=list(det.tags),
+            search_aliases=queries,
             providers={meta.provider: meta.external_id} if meta.external_id else {},
             provider_used=resolve.provider,
             metadata_resolved=resolve.matched,
         )
     else:
         # No external data yet; create from detection so episodes can bind and a
-        # card can render. The healer will retry resolution later.
+        # card can render. Use the most descriptive title for display and keep all
+        # query candidates so .repair can re-try resolution from the post text.
         media = Media(
             media_type=media_type,
-            title=query or decision.create_title,
+            title=decision.create_title or query,
             year=decision.create_year,
             tags=list(det.tags),
+            search_aliases=queries,
             metadata_resolved=False,
         )
     return await MediaRepository.upsert_merge(media)

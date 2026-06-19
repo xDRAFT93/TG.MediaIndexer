@@ -163,6 +163,9 @@ class Media:
     authors: list[str] = field(default_factory=list)
     narrator: str = ""
     tags: list[str] = field(default_factory=list)
+    # Alternative title queries (file name / caption / post text) kept so .repair
+    # can re-try resolution from the post text, not just the stored title.
+    search_aliases: list[str] = field(default_factory=list)
     providers: dict[str, str] = field(default_factory=dict)   # provider -> external id
     provider_used: str = ""
     releases: list[Release] = field(default_factory=list)     # for films
@@ -203,6 +206,7 @@ class Media:
             authors=list(d.get("authors", []) or []),
             narrator=d.get("narrator", "") or "",
             tags=list(d.get("tags", [])),
+            search_aliases=list(d.get("search_aliases", []) or []),
             providers=dict(d.get("providers", {})),
             provider_used=d.get("provider_used", ""),
             releases=[Release.from_dict(r) for r in d.get("releases", [])],
