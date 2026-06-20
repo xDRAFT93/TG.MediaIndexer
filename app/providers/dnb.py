@@ -15,6 +15,7 @@ from xml.etree import ElementTree as ET
 from ..config import settings
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
+from ._bookmatch import select_best
 from .base import MediaMetadata, Provider
 
 log = get_logger("providers.dnb")
@@ -61,35 +62,47 @@ class DNBProvider(Provider):
 
 
 def parse_dnb(root: ET.Element, query: str) -> Optional[MediaMetadata]:
-    """Extract the first usable Dublin Core record. Kept pure for testing."""
-    record = root.find(".//oai_dc:dc", _NS)
-    if record is None:
-        # Some responses nest dc elements without the oai_dc wrapper.
-        record = root.find(".//srw:recordData", _NS)
-    if record is None:
+    """Extract the best-matching Dublin Core record. Kept pure for testing."""
+    records = root.findall(".//oai_dc:dc", _NS)
+    if not records:
+        records = root.findall(".//srw:recordData", _NS)
+    if not records:
         return None
 
-    def _all(tag: str) -> list[str]:
+    def _vals(record, tag: str) -> list[str]:
         return [e.text.strip() for e in record.findall(f"dc:{tag}", _NS)
                 if e is not None and e.text and e.text.strip()]
 
-    titles = _all("title")
-    if not titles:
+    parsed = []
+    for rec in records:
+        titles = _vals(rec, "title")
+        if not titles:
+            continue
+        parsed.append({
+            "title": titles[0],
+            "original_title": "",
+            "authors": _vals(rec, "creator") or _vals(rec, "contributor"),
+            "dates": _vals(rec, "date"),
+            "descriptions": _vals(rec, "description"),
+            "subjects": _vals(rec, "subject"),
+            "identifier": next(iter(_vals(rec, "identifier")), ""),
+        })
+    if not parsed:
         return None
-    creators = _all("creator") or _all("contributor")
-    dates = _all("date")
-    descriptions = _all("description")
-    subjects = _all("subject")
 
+    best, score = select_best(query, parsed)
+    if best is None or score < 50:
+        return None
+    dates = best["dates"]
     return MediaMetadata(
-        title=titles[0],
+        title=best["title"],
         provider="dnb",
-        external_id=next(iter(_all("identifier")), ""),
+        external_id=best["identifier"],
         year=_year(dates[0] if dates else None),
-        overview=descriptions[0] if descriptions else "",
-        genres=subjects[:5],
+        overview=best["descriptions"][0] if best["descriptions"] else "",
+        genres=best["subjects"][:5],
         release_date=dates[0] if dates else "",
-        authors=creators,
+        authors=best["authors"],
     )
 
 

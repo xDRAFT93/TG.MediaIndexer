@@ -199,6 +199,13 @@ class MediaRepository:
         await db()[cls.coll].delete_one({"_id": media_id})
 
     @classmethod
+    async def apply_metadata(cls, media_id: str, fields: dict) -> None:
+        """Directly overwrite the given metadata fields (no merge). Used by
+        audiobook re-verification to replace a wrong match or clear it."""
+        payload = {**fields, "updated_at": now_utc(), "ui_dirty": True}
+        await db()[cls.coll].update_one({"_id": media_id}, {"$set": payload})
+
+    @classmethod
     async def set_root_post(cls, media_id: str, post_id: str) -> None:
         await db()[cls.coll].update_one({"_id": media_id}, {"$set": {"root_post_id": post_id}})
 

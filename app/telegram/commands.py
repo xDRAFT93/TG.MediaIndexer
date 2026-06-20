@@ -69,6 +69,8 @@ async def handle_command(event, body: str) -> None:
         await _cmd_prune(event)
     elif cmd in {"tidy", "dropbad"}:
         await _cmd_cleanup(event)
+    elif cmd in {"audverify", "fixbooks", "books"}:
+        await _cmd_audverify(event)
     else:
         await event.reply(f"Unknown command: {cmd}\n\n{_help_text()}")
 
@@ -84,6 +86,7 @@ def _help_text() -> str:
         f"{p}reindex - re-render all entries with current display rules\n"
         f"{p}prune - remove dead source links; delete emptied entries\n"
         f"{p}tidy - delete unresolved entries whose title is just an episode marker\n"
+        f"{p}audverify - re-check audiobooks with precise matching; fix/clear wrong ones\n"
         f"{p}help - show this help"
     )
 
@@ -234,22 +237,6 @@ async def _cmd_rebuild(event, args: list[str]) -> None:
 async def _cmd_reindex(event) -> None:
     """Re-render every catalog entry so old posts pick up the current display
     rules (entity limits, singular 'Quelle', episode links, collapsed quotes).
-    This re-renders from stored data; it does not re-run detection on past files.
-    Use .repair to re-match unresolved entries against the providers.
-    """
-    ids = await MediaRepository.all_ids()
-    for media_id in ids:
-        await MediaRepository.mark_dirty(media_id)
-        await update_queue.put(media_id)
-    await event.reply(
-        f"Re-indexing {len(ids)} entries with the current display rules "
-        f"(re-rendering target posts). Run .repair to also re-match unresolved ones."
-    )
-
-
-async def _cmd_reindex(event) -> None:
-    """Re-render every catalog entry so old posts pick up the current display
-    rules (entity limits, singular 'Quelle', episode links, collapsed quotes).
     Entries whose sources now all live in an ignored thread are removed. This
     re-renders from stored data; it does not re-run detection on past files.
     Use .repair to re-match unresolved entries against the providers.
@@ -344,6 +331,21 @@ async def _cmd_cleanup(event) -> None:
     await event.reply(
         f"Tidy: removed {removed} unresolved entry(ies) whose title was only an "
         f"episode marker. Run .reindex afterwards to refresh the rest."
+    )
+
+
+async def _cmd_audverify(event) -> None:
+    """Re-verify all audiobook entries with the current precise matching, fixing
+    or clearing wrong ones so the target thread reflects correct books."""
+    from ..healing.self_heal import reverify_audiobooks
+    await event.reply("Re-verifying audiobooks with precise matching — checking every book entry ...")
+    s = await reverify_audiobooks(update_queue.put_nowait)
+    await event.reply(
+        "Audiobook re-verify done.\n"
+        f"checked: {s['checked']}\n"
+        f"corrected/updated: {s['updated']}\n"
+        f"cleared (wrong match removed): {s['cleared']}\n"
+        f"kept: {s['kept']}"
     )
 
 

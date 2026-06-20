@@ -454,3 +454,28 @@ angezeigt.
   Wahrheit nur ein Episoden-Marker ist (`1a`, `100`, `S1F1`, `bd2`, `10.1` …) und
   die höchstens wenige Releases haben — die Altlasten falscher Einzel-Einträge.
   Echte Serien bleiben unangetastet.
+
+## Präzisere Hörbuch-Treffer (dieser Stand)
+
+Das Hauptproblem bei Büchern: eine Query lautet meist „Autor – Titel", und ein
+Provider liefert viele Werke desselben Autors. Wird die rohe Query gegen einen
+Ergebnistitel bewertet, dominiert der Autor — und das **falsche Buch des
+richtigen Autors** wird akzeptiert (genau der gemeldete Fehler).
+
+**Lösung:** Vor dem Vergleich werden die Autor-Namen aus der Query **entfernt**;
+nur der verbleibende **Titel** wird gegen den Ergebnistitel gematcht. Der Autor
+bläht den Score also nicht mehr auf — der Titel entscheidet. Zusätzlich wählt
+jeder Buch-Provider (Audnexus/Audible-Katalog, Google Books, DNB, Open Library)
+unter mehreren Kandidaten die **beste Titel-Übereinstimmung** statt einfach das
+erste Ergebnis. Die Schwelle ist höher (`AUDIOBOOK_MATCH_THRESHOLD`, Standard 82),
+und schwache Treffer werden **verworfen** statt als falsches Buch gepostet — ein
+unaufgelöster Eintrag ist besser als ein falscher.
+
+### Bestehende Einträge korrigieren
+- **`.audverify`** (Alias `.fixbooks`) prüft **jeden** Hörbuch-Eintrag (auch
+  bereits „aufgelöste") erneut mit dem präzisen Matching. Ein falscher Treffer
+  wird durch den korrekten ersetzt, falls auflösbar, sonst auf „unaufgelöst"
+  zurückgesetzt (die falschen Metadaten/das falsche Cover verschwinden, der
+  Dateiname-Titel bleibt). Einträge ohne gespeicherte Such-Aliase werden
+  unangetastet gelassen. Danach `.reindex` aktualisiert die Zielposts.
+- `.repair` löst unaufgelöste Hörbücher ebenfalls mit dem präzisen Matching auf.

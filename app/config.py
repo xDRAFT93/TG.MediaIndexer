@@ -89,7 +89,7 @@ class Settings:
     audnexus_region: str = field(default_factory=lambda: os.getenv("AUDNEXUS_REGION", "de"))
     books_language: str = field(default_factory=lambda: os.getenv("BOOKS_LANGUAGE", "de"))
     audiobook_match_threshold: int = field(
-        default_factory=lambda: _int("AUDIOBOOK_MATCH_THRESHOLD", 75))
+        default_factory=lambda: _int("AUDIOBOOK_MATCH_THRESHOLD", 82))
     mal_client_id: str = field(default_factory=lambda: os.getenv("MAL_CLIENT_ID", ""))
     tmdb_language: str = field(default_factory=lambda: os.getenv("TMDB_LANGUAGE", "de-DE"))
     provider_cache_ttl_days: int = field(default_factory=lambda: _int("PROVIDER_CACHE_TTL_DAYS", 30))

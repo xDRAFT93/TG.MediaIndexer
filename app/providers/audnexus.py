@@ -18,6 +18,7 @@ from typing import Optional
 from ..config import settings
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
+from ._bookmatch import select_best
 from .base import MediaMetadata, Provider
 
 log = get_logger("providers.audnexus")
@@ -77,10 +78,10 @@ class AudnexusProvider(Provider):
         return None
 
     async def _search_audible(self, query: str) -> Optional[dict]:
-        """Top Audible catalog product for a keyword (author+title) search."""
+        """Best-title-matching Audible catalog product for a keyword search."""
         params = {
             "keywords": query,
-            "num_results": 5,
+            "num_results": 8,
             "products_sort_by": "Relevance",
             "response_groups": _CATALOG_GROUPS,
         }
@@ -93,7 +94,19 @@ class AudnexusProvider(Provider):
             log.warning("Audible catalog search failed for %r: %s", query, exc)
             return None
         products = data.get("products") or []
-        return products[0] if products else None
+        if not products:
+            return None
+        cands = [{
+            "title": p.get("title", ""),
+            "original_title": p.get("subtitle", ""),
+            "authors": [a.get("name", "") for a in p.get("authors", []) if a.get("name")],
+            "raw": p,
+        } for p in products]
+        best, score = select_best(query, cands)
+        # Loose pre-filter; the registry applies the real threshold.
+        if best is None or score < 50:
+            return None
+        return best["raw"]
 
     async def _fetch_audnexus(self, asin: str, query: str) -> Optional[MediaMetadata]:
         url = f"{AUDNEXUS}/books/{asin}"

@@ -6,6 +6,7 @@ from typing import Optional
 from ..config import settings
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
+from ._bookmatch import select_best
 from .base import MediaMetadata, Provider
 
 log = get_logger("providers.openlibrary")
@@ -40,7 +41,7 @@ class OpenLibraryProvider(Provider):
             return None
 
         docs = data.get("docs") or []
-        doc = _pick(docs)
+        doc = _pick(query, docs)
         if doc is None or not doc.get("title"):
             return None
         cover_id = doc.get("cover_i")
@@ -56,11 +57,16 @@ class OpenLibraryProvider(Provider):
         )
 
 
-def _pick(docs: list) -> Optional[dict]:
-    want = _LANG3.get(settings.books_language, "")
-    if want:
-        for d in docs:
-            langs = d.get("language") or []
-            if want in langs:
-                return d
-    return docs[0] if docs else None
+def _pick(query: str, docs: list) -> Optional[dict]:
+    cands = []
+    for d in docs:
+        cands.append({
+            "title": d.get("title", ""),
+            "original_title": "",
+            "authors": list(d.get("author_name", []) or []),
+            "raw": d,
+        })
+    best, score = select_best(query, cands)
+    if best is None or score < 50:
+        return None
+    return best["raw"]

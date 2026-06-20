@@ -7,6 +7,7 @@ from typing import Optional
 from ..config import settings
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
+from ._bookmatch import select_best
 from .base import MediaMetadata, Provider
 
 log = get_logger("providers.googlebooks")
@@ -46,7 +47,7 @@ class GoogleBooksProvider(Provider):
             return None
 
         items = data.get("items") or []
-        best = _pick_german(items)
+        best = _pick_best(query, items)
         if best is None:
             return None
         info = best.get("volumeInfo", {})
@@ -69,12 +70,22 @@ class GoogleBooksProvider(Provider):
         )
 
 
-def _pick_german(items: list) -> Optional[dict]:
-    """Prefer a German-language volume; otherwise the first result."""
+def _pick_best(query: str, items: list) -> Optional[dict]:
+    """The item whose title best matches the query (author removed); German
+    editions get a small nudge on ties via select_best's author check."""
+    cands = []
     for it in items:
-        if (it.get("volumeInfo", {}).get("language") or "").lower().startswith("de"):
-            return it
-    return items[0] if items else None
+        info = it.get("volumeInfo", {})
+        cands.append({
+            "title": info.get("title", ""),
+            "original_title": info.get("subtitle", ""),
+            "authors": list(info.get("authors", []) or []),
+            "raw": it,
+        })
+    best, score = select_best(query, cands)
+    if best is None or score < 50:
+        return None
+    return best["raw"]
 
 
 def _year(value) -> Optional[int]:

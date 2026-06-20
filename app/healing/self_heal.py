@@ -145,6 +145,73 @@ async def healer_loop() -> None:  # pragma: no cover - long-running
             log.exception("Healing cycle failed: %s", exc)
 
 
+async def reverify_audiobooks(enqueue=None) -> dict:
+    """Re-check EVERY audiobook entry (resolved or not) with the current precise
+    matching. A wrong match (right author, wrong book) is replaced with the
+    correct one if it can now be resolved, or cleared back to unresolved so the
+    target post stops showing the wrong book. Entries without stored query
+    aliases are left untouched (cannot be re-queried reliably)."""
+    summary = {"checked": 0, "updated": 0, "cleared": 0, "kept": 0}
+    if _registry is None:
+        return summary
+    ids = await MediaRepository.all_ids()
+    for media_id in ids:
+        media = await MediaRepository.get(media_id)
+        if media is None or media.media_type != MediaType.AUDIOBOOK:
+            continue
+        summary["checked"] += 1
+        queries = [q for q in (getattr(media, "search_aliases", []) or []) if q]
+        if not queries:
+            summary["kept"] += 1
+            continue
+
+        result = None
+        for q in queries:
+            r = await _registry.resolve(q, MediaType.AUDIOBOOK, media.year)
+            if r.matched:
+                result = r
+                break
+
+        if result is not None and result.metadata is not None:
+            meta = result.metadata
+            await MediaRepository.apply_metadata(media_id, {
+                "title": meta.title or media.title,
+                "year": meta.year or media.year,
+                "original_title": meta.original_title,
+                "overview": meta.overview,
+                "genres": list(meta.genres),
+                "rating": meta.rating,
+                "votes": meta.votes,
+                "release_date": meta.release_date,
+                "runtime": meta.runtime,
+                "poster_url": meta.poster_url,
+                "authors": list(getattr(meta, "authors", []) or []),
+                "narrator": getattr(meta, "narrator", "") or "",
+                "providers": {meta.provider: meta.external_id} if meta.external_id else {},
+                "provider_used": meta.provider,
+                "metadata_resolved": True,
+            })
+            summary["updated"] += 1
+        elif media.metadata_resolved:
+            # Previously "resolved" but no longer matches precisely -> clear the
+            # wrong metadata, keep the plain detected title.
+            await MediaRepository.apply_metadata(media_id, {
+                "title": queries[0],
+                "original_title": "", "overview": "", "genres": [],
+                "rating": None, "votes": None, "release_date": "", "runtime": None,
+                "poster_url": "", "authors": [], "narrator": "",
+                "providers": {}, "provider_used": "", "metadata_resolved": False,
+            })
+            summary["cleared"] += 1
+        else:
+            summary["kept"] += 1
+
+        if enqueue:
+            enqueue(media_id)
+    log.info("Audiobook re-verify: %s", summary)
+    return summary
+
+
 def start_healer(registry: ProviderRegistry) -> asyncio.Task:
     init_healing(registry)
     return asyncio.create_task(healer_loop(), name="healer")

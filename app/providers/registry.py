@@ -31,6 +31,7 @@ from .openlibrary import OpenLibraryProvider
 from .tmdb import TMDbProvider
 from ..config import settings
 from ..detection.confidence import title_similarity
+from ._bookmatch import book_title_score
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
 from ..storage.repositories import ProviderCacheRepository
@@ -123,32 +124,32 @@ class ProviderRegistry:
                 continue
             if meta is None or not meta.title:
                 continue
-            score = title_similarity(query, meta.title)
-            if meta.original_title:
-                score = max(score, title_similarity(query, meta.original_title))
-            # Audiobook file names usually carry the author too ("Autor - Titel"),
-            # so also score the query against an author+title combination.
-            if media_type == MediaType.AUDIOBOOK and getattr(meta, "authors", None):
-                authors = " ".join(meta.authors)
-                score = max(
-                    score,
-                    title_similarity(query, f"{authors} {meta.title}"),
-                    title_similarity(query, f"{meta.title} {authors}"),
-                )
+            if media_type == MediaType.AUDIOBOOK:
+                # Author-stripped title match so a wrong book by the right author
+                # cannot pass on the author alone.
+                score = book_title_score(query, meta.title,
+                                         getattr(meta, "authors", None),
+                                         meta.original_title)
+            else:
+                score = title_similarity(query, meta.title)
+                if meta.original_title:
+                    score = max(score, title_similarity(query, meta.original_title))
             if score >= threshold:
                 return ResolveResult(meta, provider.name, score, True)
             if score > best_score:
                 best, best_provider, best_score = meta, provider.name, score
 
-        # For anime a weak "best" guess is more harmful than no data at all, so it
-        # is discarded entirely and the entry stays unresolved with its detected
-        # title. For film/series a partial best is kept (unresolved) as a hint.
-        if best is not None and media_type != MediaType.ANIME:
+        # For anime AND audiobooks a weak "best" guess is more harmful than no
+        # data at all (short anime titles collide; books collide on author), so a
+        # below-threshold best is discarded and the entry stays unresolved. For
+        # film/series a partial best is kept (unresolved) as a hint.
+        strict = media_type in (MediaType.ANIME, MediaType.AUDIOBOOK)
+        if best is not None and not strict:
             log.info("No strong match for %r (best %.0f via %s); keeping partial.",
                      query, best_score, best_provider)
             return ResolveResult(best, best_provider, best_score, False)
         if best is not None:
-            log.info("Anime %r below strict threshold (best %.0f via %s) — discarding.",
+            log.info("%r below strict threshold (best %.0f via %s) — discarding.",
                      query, best_score, best_provider)
         return ResolveResult(None, "", 0.0, False)
 
