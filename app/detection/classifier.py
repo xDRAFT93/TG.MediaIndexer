@@ -59,30 +59,88 @@ _DIGIT_FALLBACK = {
     "\U0001D7CE": "0", "\U0001D7CF": "1", "\U0001D7D0": "2", "\U0001D7D1": "3",
 }
 
+# Emoji / pictographic / decorative symbol ranges. Channels wrap titles in these
+# ("🔥 Title 🔥", "⭐ Title ⭐", "▶ Title ◀"), which breaks both grouping (each
+# decoration differs) and provider search. They are never part of a real title.
+_EMOJI_RE = re.compile(
+    "["
+    "\U0001F000-\U0001FAFF"   # emoji blocks (symbols/emoticons/transport/supplemental)
+    "\U00002600-\U000027BF"   # misc symbols + dingbats (★ ☎ ✂ ✦ ➤ …)
+    "\U00002190-\U000021FF"   # arrows
+    "\U00002300-\U000023FF"   # misc technical (⏳ ⎪ ⌛ …)
+    "\U000025A0-\U000025FF"   # geometric shapes (■ ◆ ▶ ● …)
+    "\U00002B00-\U00002BFF"   # misc symbols & arrows (⬛ ⭐ ➡ …)
+    "\U0001F1E6-\U0001F1FF"   # regional indicators
+    "\U0000FE00-\U0000FE0F"   # variation selectors
+    "\U00002066-\U0000206F"   # bidi/format controls
+    "\U0000200B-\U0000200F"   # zero-width spaces/joiner, marks
+    "\U000020E3\U00002022\U0000FE0F\U00002028\U00002029"
+    "\U00003010\U00003011\U0000300A\U0000300B\U00003008\U00003009"  # 【】《》〈〉
+    "\U0000300C\U0000300D\U0000300E\U0000300F"                      # 「」『』
+    "\U00003016\U00003017\U00003014\U00003015"                      # 〖〗〔〕
+    "❮❯❰❱➤➢▷◁"
+    "]+",
+    flags=re.UNICODE,
+)
+
 
 def _normalize_unicode(s: str) -> str:
-    """Fold stylised Unicode to plain ASCII-ish text.
+    """Fold stylised Unicode to plain ASCII-ish text and drop decorative emoji.
 
     NFKC compatibility normalisation converts the mathematical alphanumeric
     symbols Telegram channels love (bold/italic/sans-serif letters and digits)
-    and modifier letters (ᴴᴰ) to their plain equivalents, so the regex-based
-    marker/title detection works on styled posts.
+    and modifier letters (ᴴᴰ) to their plain equivalents; decorative emoji and
+    pictographic symbols are then removed so the regex-based marker/title
+    detection — and grouping — work on styled posts. Newlines are preserved so
+    the line-based title extraction still sees the post's structure.
     """
     if not s:
         return s
     s = unicodedata.normalize("NFKC", s)
+    s = _EMOJI_RE.sub(" ", s)
     if any(ch in _DIGIT_FALLBACK for ch in s):
         s = "".join(_DIGIT_FALLBACK.get(ch, ch) for ch in s)
+    s = re.sub(r"[ \t]+", " ", s)  # collapse horizontal whitespace, keep newlines
     return s
 
 
-_EDGE_CHARS = " \t|-–—:·•.,/\\_"
+# Decorative punctuation that should never sit at a title edge (separators,
+# brackets-as-decoration, quotes …). Letters, digits and round parentheses are
+# kept so "(2024)"-style suffixes survive.
+_EDGE_STRIP = set("|-–—:;·•.,/\\_«»‹›*~^+=#@!?\"'`“”„‚‘’…⎪┃▬<>[]{}"
+                  "『』「」【】〖〗〔〕《》〈〉｜～❮❯➤➢▷◁❰❱")
+
+# Narrow set of quality/resolution markers that are decorative when they LEAD a
+# title (often left behind by a 【HD】/【4K】 prefix tag). Kept deliberately small
+# so a real title like "WEB of Lies" is never truncated.
+_LEADING_QUALITY_RE = re.compile(
+    r"^(?:\d{3,4}p|[2-9]k|uhd|fhd|qhd|hd|sd|hdr\d*)\b[ ._-]*",
+    re.IGNORECASE,
+)
 
 
 def _clean_title_edges(title: str) -> str:
-    """Strip separator characters left dangling at the title's edges, e.g.
-    "Peaky Blinders |" -> "Peaky Blinders"."""
-    return (title or "").strip(_EDGE_CHARS).strip()
+    """Strip whitespace, decorative punctuation and any symbol characters left
+    dangling at a title's edges, plus a leading quality marker, e.g.
+    "🔥 Eternal You 🔥" -> "Eternal You", "Peaky Blinders |" -> "Peaky Blinders",
+    "HD Peaky Blinders" (from "【HD】 Peaky Blinders") -> "Peaky Blinders"."""
+    chars = list(title or "")
+
+    def junk(ch: str) -> bool:
+        return ch.isspace() or ch in _EDGE_STRIP or unicodedata.category(ch)[0] == "S"
+
+    while chars and junk(chars[0]):
+        chars.pop(0)
+    while chars and junk(chars[-1]):
+        chars.pop()
+    out = "".join(chars).strip()
+    # Drop a leading quality token, then re-strip any edge junk it exposed.
+    new = _LEADING_QUALITY_RE.sub("", out)
+    if new != out:
+        new = new.strip(" ._-").strip()
+        if new:  # never strip the title away entirely
+            out = new
+    return out
 
 
 def _bare_number_episode(title: str) -> Optional[int]:

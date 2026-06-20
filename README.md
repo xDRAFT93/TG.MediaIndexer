@@ -479,3 +479,16 @@ unaufgelöster Eintrag ist besser als ein falscher.
   Dateiname-Titel bleibt). Einträge ohne gespeicherte Such-Aliase werden
   unangetastet gelassen. Danach `.reindex` aktualisiert die Zielposts.
 - `.repair` löst unaufgelöste Hörbücher ebenfalls mit dem präzisen Matching auf.
+
+## Emoji & Sonderzeichen um Titel (dieser Stand)
+
+Beim Rückfall auf den Telegram-Post-Text waren Titel oft von Deko-Zeichen
+umrahmt (`🔥 Titel 🔥`, `⭐ Titel ⭐`, `▶ Titel ◀`, `【HD】 Titel`, `『Titel』`).
+Weil die Deko variiert, entstanden je Variante eigene Einträge, und die
+Provider-Suche scheiterte. Jetzt werden bei der Normalisierung **Emojis,
+piktografische Symbole und dekorative Klammern entfernt**, Symbol-/Sonderzeichen
+an den **Titelrändern** gestrippt und ein führender Qualitäts-Marker (`HD`, `4K`,
+`1080p` … – aus `【HD】`-Tags) entfernt. Ergebnis: `🔥 Eternal You 🔥`,
+`⭐ Eternal You ⭐` und `【HD】 Eternal You` ergeben alle denselben sauberen Titel
+`Eternal You` und landen in **einem** Eintrag. Diese Bereinigung gilt für Anzeige
+**und** Suche; `.reindex`/`.repair` wenden sie auf bestehende Einträge an.
