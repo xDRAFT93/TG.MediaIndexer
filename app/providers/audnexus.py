@@ -18,7 +18,7 @@ from typing import Optional
 from ..config import settings
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
-from ._bookmatch import select_best
+from ._bookmatch import audiobook_score
 from .base import MediaMetadata, Provider
 
 log = get_logger("providers.audnexus")
@@ -32,12 +32,20 @@ _AUDIBLE_TLD = {
     "de": "de", "us": "com", "uk": "co.uk", "fr": "fr", "ca": "ca",
     "au": "com.au", "in": "in", "it": "it", "es": "es", "jp": "co.jp",
 }
-_CATALOG_GROUPS = "contributors,product_desc,product_attrs,media"
+_CATALOG_GROUPS = "contributors,product_desc,product_attrs,media,series"
 
 
 def extract_asin(text: str) -> str:
     m = ASIN_RE.search((text or "").upper())
     return m.group(1) if m else ""
+
+
+def _hint_asin(hints: Optional[dict]) -> str:
+    """A previously stored ASIN passed as a hint -> direct lookup (Audnexus as
+    the primary source on re-resolution)."""
+    if not hints:
+        return ""
+    return extract_asin(hints.get("asin") or "")
 
 
 class AudnexusProvider(Provider):
@@ -55,33 +63,38 @@ class AudnexusProvider(Provider):
         return f"https://api.audible.{tld}/1.0/catalog/products"
 
     async def search(self, query: str, media_type: MediaType,
-                     year: Optional[int]) -> Optional[MediaMetadata]:
+                     year: Optional[int],
+                     hints: Optional[dict] = None) -> Optional[MediaMetadata]:
         if media_type != MediaType.AUDIOBOOK or not query:
             return None
 
-        asin = extract_asin(query)
-        catalog_product = None
+        # 1) A known/explicit ASIN wins -> direct Audnexus lookup (primary source).
+        asin = extract_asin(query) or _hint_asin(hints)
+        catalog_meta: Optional[MediaMetadata] = None
         if not asin:
-            catalog_product = await self._search_audible(query)
-            if catalog_product is None:
+            # 2) Resolve the best ASIN from the Audible catalog using the full
+            #    composite score (title + authors + series + band + language).
+            catalog_meta = await self._search_audible(query, hints)
+            if catalog_meta is None:
                 return None  # nothing on Audible -> let the next provider try
-            asin = catalog_product.get("asin", "")
+            asin = catalog_meta.external_id
 
-        # Prefer the rich, normalised Audnexus record for the resolved ASIN.
         if asin:
             meta = await self._fetch_audnexus(asin, query)
             if meta is not None:
+                if catalog_meta is not None:
+                    _backfill(meta, catalog_meta)
                 return meta
-        # Fallback: build from the Audible catalog product we already fetched.
-        if catalog_product is not None:
-            return _from_audible_product(catalog_product, query)
-        return None
+        # Fallback: the Audible catalog metadata we already built.
+        return catalog_meta
 
-    async def _search_audible(self, query: str) -> Optional[dict]:
-        """Best-title-matching Audible catalog product for a keyword search."""
+    async def _search_audible(self, query: str,
+                              hints: Optional[dict]) -> Optional[MediaMetadata]:
+        """Best Audible catalog product by composite score, returned as
+        MediaMetadata (carrying its ASIN in external_id)."""
         params = {
             "keywords": query,
-            "num_results": 8,
+            "num_results": 10,
             "products_sort_by": "Relevance",
             "response_groups": _CATALOG_GROUPS,
         }
@@ -93,20 +106,20 @@ class AudnexusProvider(Provider):
         except Exception as exc:  # pragma: no cover - network
             log.warning("Audible catalog search failed for %r: %s", query, exc)
             return None
-        products = data.get("products") or []
-        if not products:
+        metas = [m for m in (_from_audible_product(p, query)
+                             for p in (data.get("products") or [])) if m is not None]
+        if not metas:
             return None
-        cands = [{
-            "title": p.get("title", ""),
-            "original_title": p.get("subtitle", ""),
-            "authors": [a.get("name", "") for a in p.get("authors", []) if a.get("name")],
-            "raw": p,
-        } for p in products]
-        best, score = select_best(query, cands)
-        # Loose pre-filter; the registry applies the real threshold.
-        if best is None or score < 50:
+        best: Optional[MediaMetadata] = None
+        best_score, best_title = -1.0, -1.0
+        for m in metas:
+            score, title, _ = audiobook_score(query, m, hints)
+            if score > best_score:
+                best, best_score, best_title = m, score, title
+        # Loose title floor; the registry applies the real accept gate.
+        if best is None or best_title < 55:
             return None
-        return best["raw"]
+        return best
 
     async def _fetch_audnexus(self, asin: str, query: str) -> Optional[MediaMetadata]:
         url = f"{AUDNEXUS}/books/{asin}"
@@ -123,6 +136,7 @@ class AudnexusProvider(Provider):
         authors = [a.get("name", "") for a in d.get("authors", []) if a.get("name")]
         narrators = [n.get("name", "") for n in d.get("narrators", []) if n.get("name")]
         genres = [g.get("name", "") for g in d.get("genres", []) if g.get("name")]
+        series, volume = _series_from_audnexus(d)
         return MediaMetadata(
             title=d.get("title", "") or query,
             provider=self.name,
@@ -136,7 +150,52 @@ class AudnexusProvider(Provider):
             poster_url=d.get("image", "") or "",
             authors=authors,
             narrator=", ".join(narrators),
+            series=series,
+            volume=volume,
+            language=(d.get("language", "") or "")[:2].lower(),
         )
+
+
+def _backfill(primary: MediaMetadata, extra: MediaMetadata) -> None:
+    """Fill empty fields on the primary (Audnexus) record from the Audible
+    catalog product. Audnexus stays authoritative; only gaps are filled."""
+    for attr in ("overview", "poster_url", "narrator", "series", "release_date",
+                 "original_title", "language"):
+        if not getattr(primary, attr, "") and getattr(extra, attr, ""):
+            setattr(primary, attr, getattr(extra, attr))
+    if not primary.authors and extra.authors:
+        primary.authors = list(extra.authors)
+    if not primary.genres and extra.genres:
+        primary.genres = list(extra.genres)
+    if primary.volume is None and extra.volume is not None:
+        primary.volume = extra.volume
+    if primary.year is None and extra.year is not None:
+        primary.year = extra.year
+
+
+def _series_from_audnexus(d: dict) -> tuple[str, Optional[int]]:
+    sp = d.get("seriesPrimary") or {}
+    name = sp.get("name", "") or ""
+    pos = sp.get("position", "")
+    vol = None
+    if pos:
+        m = re.search(r"\d{1,3}", str(pos))
+        vol = int(m.group(0)) if m else None
+    return name, vol
+
+
+def _series_from_audible(p: dict) -> tuple[str, Optional[int]]:
+    series = p.get("series") or p.get("relationships") or []
+    if isinstance(series, list) and series:
+        s0 = series[0] or {}
+        name = s0.get("title", "") or s0.get("name", "") or ""
+        seq = s0.get("sequence", "") or s0.get("sort", "")
+        vol = None
+        if seq:
+            m = re.search(r"\d{1,3}", str(seq))
+            vol = int(m.group(0)) if m else None
+        return name, vol
+    return "", None
 
 
 def _from_audible_product(p: dict, query: str) -> Optional[MediaMetadata]:
@@ -144,6 +203,7 @@ def _from_audible_product(p: dict, query: str) -> Optional[MediaMetadata]:
         return None
     authors = [a.get("name", "") for a in p.get("authors", []) if a.get("name")]
     narrators = [n.get("name", "") for n in p.get("narrators", []) if n.get("name")]
+    series, volume = _series_from_audible(p)
     return MediaMetadata(
         title=p.get("title", "") or query,
         provider="audnexus",
@@ -156,6 +216,9 @@ def _from_audible_product(p: dict, query: str) -> Optional[MediaMetadata]:
         poster_url=_image(p.get("product_images")),
         authors=authors,
         narrator=", ".join(narrators),
+        series=series,
+        volume=volume,
+        language=(p.get("language", "") or "")[:2].lower(),
     )
 
 

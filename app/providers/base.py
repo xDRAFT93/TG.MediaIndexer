@@ -25,6 +25,9 @@ class MediaMetadata:
     poster_url: str = ""
     authors: list[str] = field(default_factory=list)
     narrator: str = ""
+    series: str = ""
+    volume: Optional[int] = None
+    language: str = ""
 
     def to_dict(self) -> dict:
         from dataclasses import asdict
@@ -53,5 +56,6 @@ class Provider:
         return True
 
     async def search(self, query: str, media_type: MediaType,
-                     year: Optional[int]) -> Optional[MediaMetadata]:
+                     year: Optional[int],
+                     hints: Optional[dict] = None) -> Optional[MediaMetadata]:
         raise NotImplementedError

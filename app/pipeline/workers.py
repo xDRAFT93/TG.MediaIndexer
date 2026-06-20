@@ -344,10 +344,18 @@ async def _create_media(decision, det: Detection,
     if not queries:
         queries = [decision.create_title or ""]
 
+    hints = None
+    if media_type == MediaType.AUDIOBOOK:
+        hints = {
+            "authors": list(getattr(det, "authors", None) or []),
+            "volume": getattr(det, "volume", None),
+            "language": settings.books_language,
+        }
+
     results: list[tuple[str, ResolveResult]] = []
     matched: Optional[tuple[str, ResolveResult]] = None
     for q in queries:
-        r = await registry.resolve(q, media_type, decision.create_year)
+        r = await registry.resolve(q, media_type, decision.create_year, hints)
         results.append((q, r))
         if r.matched:
             matched = (q, r)

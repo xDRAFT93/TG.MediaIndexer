@@ -41,7 +41,8 @@ class JikanProvider(Provider):
         return media_type == MediaType.ANIME
 
     async def search(self, query: str, media_type: MediaType,
-                     year: Optional[int]) -> Optional[MediaMetadata]:
+                     year: Optional[int],
+                     hints: Optional[dict] = None) -> Optional[MediaMetadata]:
         if not query:
             return None
         params = {"q": query, "limit": 5, "sfw": "false"}

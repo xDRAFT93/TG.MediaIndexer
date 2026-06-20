@@ -31,7 +31,7 @@ from .openlibrary import OpenLibraryProvider
 from .tmdb import TMDbProvider
 from ..config import settings
 from ..detection.confidence import title_similarity
-from ._bookmatch import book_title_score
+from ._bookmatch import audiobook_score
 from ..logging_setup import get_logger
 from ..storage.models import MediaType
 from ..storage.repositories import ProviderCacheRepository
@@ -89,19 +89,33 @@ class ProviderRegistry:
         return self._chains.get(media_type, [tmdb_first(self._all)])
 
     async def _cached_search(self, provider: Provider, query: str,
-                             media_type: MediaType, year: Optional[int]
+                             media_type: MediaType, year: Optional[int],
+                             hints: Optional[dict] = None
                              ) -> Optional[MediaMetadata]:
-        cache_key = f"{provider.name}:{media_type.value}:{query.lower()}:{year or 0}"
+        # Audiobook results depend on the author/band/asin hints (they pick the
+        # ASIN), so fold a small hint signature into the cache key.
+        hint_sig = ""
+        if media_type == MediaType.AUDIOBOOK and hints:
+            authors = ",".join(sorted(a.lower() for a in (hints.get("authors") or [])))
+            hint_sig = f":{authors}:{hints.get('volume') or ''}:{(hints.get('asin') or '').upper()}"
+        cache_key = f"{provider.name}:{media_type.value}:{query.lower()}:{year or 0}{hint_sig}"
         cached = await ProviderCacheRepository.get(cache_key)
         if cached is not None:
             return MediaMetadata.from_dict(cached) if cached else None
-        result = await provider.search(query, media_type, year)
+        result = await provider.search(query, media_type, year, hints)
         await ProviderCacheRepository.set(cache_key, result.to_dict() if result else None)
         return result
 
     async def resolve(self, query: str, media_type: MediaType,
-                      year: Optional[int]) -> ResolveResult:
-        """Walk the fallback chain and return the best metadata match."""
+                      year: Optional[int],
+                      hints: Optional[dict] = None) -> ResolveResult:
+        """Walk the fallback chain and return the best metadata match.
+
+        ``hints`` (audiobooks): {authors, narrator, series, volume, language,
+        asin}. They drive the composite score and a strict accept gate so a
+        wrong ASIN is never stored, and let a stored ASIN re-fetch directly from
+        Audnexus (the primary source).
+        """
         if not query:
             return ResolveResult(None, "", 0.0, False)
 
@@ -113,27 +127,34 @@ class ProviderRegistry:
         best: Optional[MediaMetadata] = None
         best_provider = ""
         best_score = -1.0
+        h_authors = (hints or {}).get("authors") or []
 
         for provider in self.chain_for(media_type):
             if not provider.enabled or not provider.supports(media_type):
                 continue
             try:
-                meta = await self._cached_search(provider, query, media_type, year)
+                meta = await self._cached_search(provider, query, media_type, year, hints)
             except Exception as exc:  # pragma: no cover - defensive
                 log.warning("Provider %s errored on %r: %s", provider.name, query, exc)
                 continue
             if meta is None or not meta.title:
                 continue
             if media_type == MediaType.AUDIOBOOK:
-                # Author-stripped title match so a wrong book by the right author
-                # cannot pass on the author alone.
-                score = book_title_score(query, meta.title,
-                                         getattr(meta, "authors", None),
-                                         meta.original_title)
-            else:
-                score = title_similarity(query, meta.title)
-                if meta.original_title:
-                    score = max(score, title_similarity(query, meta.original_title))
+                score, title_score, a_ov = audiobook_score(query, meta, hints)
+                # Strict accept: title must clear the threshold AND, when authors
+                # are known, at least one author token must match. This is what
+                # prevents storing a wrong book / wrong ASIN.
+                accept = title_score >= threshold and (not h_authors or a_ov >= 0.34)
+                if accept:
+                    result = ResolveResult(meta, provider.name, score, True)
+                    return await self._enrich_audiobook(result, query, year, hints)
+                if score > best_score:
+                    best, best_provider, best_score = meta, provider.name, score
+                continue
+
+            score = title_similarity(query, meta.title)
+            if meta.original_title:
+                score = max(score, title_similarity(query, meta.original_title))
             if score >= threshold:
                 return ResolveResult(meta, provider.name, score, True)
             if score > best_score:
@@ -152,6 +173,40 @@ class ProviderRegistry:
             log.info("%r below strict threshold (best %.0f via %s) — discarding.",
                      query, best_score, best_provider)
         return ResolveResult(None, "", 0.0, False)
+
+    async def _enrich_audiobook(self, result: ResolveResult, query: str,
+                                year: Optional[int],
+                                hints: Optional[dict]) -> ResolveResult:
+        """Audnexus/Audible stays the authoritative source; the other book
+        providers only FILL gaps (overview, cover, genres) and never override the
+        ASIN/title/authors. Used only for an accepted audiobook match."""
+        meta = result.metadata
+        if meta is None or result.provider != "audnexus":
+            return result
+        if meta.overview and meta.poster_url and meta.genres:
+            return result  # already complete
+        for provider in self.chain_for(MediaType.AUDIOBOOK):
+            if provider.name == "audnexus" or not provider.enabled:
+                continue
+            if meta.overview and meta.poster_url and meta.genres:
+                break
+            try:
+                extra = await self._cached_search(provider, query,
+                                                  MediaType.AUDIOBOOK, year, hints)
+            except Exception:  # pragma: no cover - defensive
+                continue
+            if extra is None:
+                continue
+            # Verification: only enrich from a source that agrees on the title.
+            if title_similarity(meta.title, extra.title) < 80:
+                continue
+            if not meta.overview and extra.overview:
+                meta.overview = extra.overview
+            if not meta.poster_url and extra.poster_url:
+                meta.poster_url = extra.poster_url
+            if not meta.genres and extra.genres:
+                meta.genres = list(extra.genres)
+        return result
 
     async def aclose(self) -> None:
         await self.client.aclose()

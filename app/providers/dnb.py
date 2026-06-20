@@ -39,7 +39,8 @@ class DNBProvider(Provider):
         return True  # no key required
 
     async def search(self, query: str, media_type: MediaType,
-                     year: Optional[int]) -> Optional[MediaMetadata]:
+                     year: Optional[int],
+                     hints: Optional[dict] = None) -> Optional[MediaMetadata]:
         if media_type != MediaType.AUDIOBOOK or not query:
             return None
         params = {

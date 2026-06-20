@@ -32,6 +32,21 @@ log = get_logger("healing.self_heal")
 _registry: Optional[ProviderRegistry] = None
 
 
+def _audiobook_hints(media) -> dict:
+    """Hints for the precise audiobook matcher built from a stored entry:
+    authors, narrator, language and — crucially — the stored Audible ASIN so the
+    primary source (Audnexus/Audible) is re-fetched directly on correction."""
+    if getattr(media, "media_type", None) != MediaType.AUDIOBOOK:
+        return {}
+    providers = getattr(media, "providers", {}) or {}
+    return {
+        "authors": list(getattr(media, "authors", []) or []),
+        "narrator": getattr(media, "narrator", "") or "",
+        "language": settings.books_language,
+        "asin": providers.get("audnexus", "") or "",
+    }
+
+
 def init_healing(registry: ProviderRegistry) -> None:
     """Wire the provider registry so on-demand .repair can resolve metadata."""
     global _registry
@@ -89,9 +104,10 @@ async def _reresolve_metadata(summary: dict) -> None:
                 queries.append(q)
         if not queries:
             continue
+        hints = _audiobook_hints(media)
         result = None
         for q in queries:
-            r = await _registry.resolve(q, media.media_type, media.year)
+            r = await _registry.resolve(q, media.media_type, media.year, hints)
             if result is None and r.found:
                 result = r
             if r.matched:
@@ -164,16 +180,30 @@ async def reverify_audiobooks(enqueue=None) -> dict:
             continue
         summary["checked"] += 1
         queries = [q for q in (getattr(media, "search_aliases", []) or []) if q]
-        if not queries:
-            summary["kept"] += 1
-            continue
+        # Include the stored book title so a known ASIN can still be matched even
+        # when no aliases were saved.
+        if media.title and media.title not in queries:
+            queries = [media.title, *queries]
+        hints = _audiobook_hints(media)
 
         result = None
-        for q in queries:
-            r = await _registry.resolve(q, MediaType.AUDIOBOOK, media.year)
+        # 1) If we already have an Audible ASIN, re-fetch it directly — Audnexus
+        #    is the authoritative source, this just refreshes the same book.
+        if hints.get("asin"):
+            r = await _registry.resolve(media.title or queries[0] if queries else hints["asin"],
+                                        MediaType.AUDIOBOOK, media.year, hints)
             if r.matched:
                 result = r
-                break
+        # 2) Otherwise (or if the ASIN no longer resolves) search by the aliases.
+        if result is None:
+            if not queries:
+                summary["kept"] += 1
+                continue
+            for q in queries:
+                r = await _registry.resolve(q, MediaType.AUDIOBOOK, media.year, hints)
+                if r.matched:
+                    result = r
+                    break
 
         if result is not None and result.metadata is not None:
             meta = result.metadata

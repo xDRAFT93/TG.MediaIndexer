@@ -492,3 +492,32 @@ an den **Titelrändern** gestrippt und ein führender Qualitäts-Marker (`HD`, `
 `⭐ Eternal You ⭐` und `【HD】 Eternal You` ergeben alle denselben sauberen Titel
 `Eternal You` und landen in **einem** Eintrag. Diese Bereinigung gilt für Anzeige
 **und** Suche; `.reindex`/`.repair` wenden sie auf bestehende Einträge an.
+
+## Hörbuch-ASIN über besten Provider-Match (dieser Stand)
+
+Die Audible-**ASIN** wird nicht mehr nur aus dem Dateinamen gezogen, sondern über
+den **besten Provider-Match** bestimmt. Bewertet werden **Titel, Autoren,
+Sprecher, Serie, Band und Sprache** zusammen (`audiobook_score`): der
+(autorenbereinigte) Titel ist das Hauptsignal, Autoren/Serie/Band/Sprache erhöhen
+oder senken die Sicherheit.
+
+**Dateinamen-Autoren:** „Autor 1, Autor 2 - Titel" wird korrekt in Autorenliste +
+Buchtitel zerlegt (komma­getrennte Autoren, Erkennung tolerant für „Nachname,
+Vorname"); „… Band 3" liefert die Bandnummer. Eine „Serie - Band"-Schreibweise
+(mit Artikel) wird **nicht** fälschlich als Autor interpretiert. Die Autoren
+fließen ins Matching ein.
+
+**Audnexus/Audible als Hauptquelle:** Nach erfolgreichem Match wird die **ASIN
+gespeichert**. Bei jeder Korrektur/Auflösung wird eine vorhandene ASIN **direkt**
+bei Audnexus abgefragt (autoritative Quelle, frische Daten). Google Books, DNB und
+Open Library dienen nur zur **Identifikation, Ergänzung** (fehlende
+Beschreibung/Cover/Genres) **und Verifikation** (nur ergänzen, wenn der Titel
+übereinstimmt) — sie überschreiben niemals ASIN/Titel/Autoren.
+
+**Keine unsicheren Treffer:** Ein Match wird nur akzeptiert, wenn der Titel die
+Schwelle erreicht **und** (bei bekannten Autoren) mindestens ein Autor-Token
+übereinstimmt. Sonst bleibt der Eintrag unaufgelöst — es wird **keine falsche
+ASIN** gespeichert.
+
+**Korrekturbefehle:** `.audverify` und `.repair` nutzen diese Regeln vollständig
+(Autoren/Sprecher/Sprache als Hinweise, gespeicherte ASIN als Hauptquelle).

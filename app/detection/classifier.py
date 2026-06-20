@@ -38,6 +38,10 @@ class Detection:
     # order, so resolution can fall back to the post text when the file-name
     # title does not match a provider.
     search_titles: list[str] = field(default_factory=list)
+    # Audiobook hints parsed from the file name ("Autor 1, Autor 2 - Titel",
+    # "… Band 3") used to score and verify the provider match.
+    authors: list[str] = field(default_factory=list)
+    volume: Optional[int] = None
 
     @property
     def provider_query(self) -> str:
@@ -155,6 +159,72 @@ def _bare_number_episode(title: str) -> Optional[int]:
     if len(t) == 4 and 1900 <= n <= 2099:
         return None
     return n if n > 0 else None
+
+
+_ARTICLES = {"der", "die", "das", "ein", "eine", "the", "a", "an", "les", "la",
+             "le", "el", "los", "den", "dem", "des"}
+_AUTHOR_HYPHEN_RE = re.compile(r"\s+[-–—]\s+")
+_VOLUME_RE = re.compile(r"\b(?:band|teil|vol|volume|buch|book)\.?\s*(\d{1,3})\b", re.I)
+_VOLUME_SUFFIX_RE = re.compile(
+    r"\s*[\(\[]?\s*(?:band|teil|vol|volume|buch|book)\.?\s*\d{1,3}\s*[\)\]]?\s*$", re.I)
+# Trailing audiobook qualifiers to drop from a parsed book title.
+_AB_QUALIFIER_RE = re.compile(
+    r"\s*[\(\[]?\s*(?:ungek[üu]rzt|gek[üu]rzt|gekuerzt|h[öo]rbuch|h[öo]rspiel|"
+    r"lesung|autorenlesung|audiobook|komplett|vollst[äa]ndig)\s*[\)\]]?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _looks_like_author_list(s: str) -> bool:
+    """Whether the part before a ' - ' is plausibly one or more person names
+    (capitalised, no digits, short, not starting with an article). This keeps a
+    'Series - Volume' string from being misread as 'Author - Title'."""
+    s = (s or "").strip()
+    if not s or any(ch.isdigit() for ch in s):
+        return False
+    parts = [p.strip() for p in s.split(",") if p.strip()]
+    if not parts:
+        return False
+    for p in parts:
+        toks = p.split()
+        if not (1 <= len(toks) <= 4):
+            return False
+        if toks[0].lower() in _ARTICLES:
+            return False
+        if not toks[0][:1].isupper():
+            return False
+    return True
+
+
+def _parse_author_title(text: str) -> tuple[list[str], str]:
+    """Split 'Author1, Author2 - Title' into (authors, title). Returns ([], text)
+    when the leading part is not name-like."""
+    parts = _AUTHOR_HYPHEN_RE.split(text or "", maxsplit=1)
+    if len(parts) != 2:
+        return [], (text or "")
+    left, right = parts[0].strip(), parts[1].strip()
+    if not _looks_like_author_list(left):
+        return [], (text or "")
+    authors = [p.strip() for p in left.split(",") if p.strip()]
+    return authors, right
+
+
+def _parse_volume(text: str) -> Optional[int]:
+    m = _VOLUME_RE.search(text or "")
+    return int(m.group(1)) if m else None
+
+
+def _clean_book_title(title: str) -> str:
+    """Edge-clean a book title and drop trailing audiobook qualifiers and a
+    trailing volume marker ('… Band 1')."""
+    t = _clean_title_edges(title or "")
+    prev = None
+    while t and t != prev:
+        prev = t
+        t = _AB_QUALIFIER_RE.sub("", t)
+        t = _VOLUME_SUFFIX_RE.sub("", t)
+        t = _clean_title_edges(t)
+    return t
 
 
 def classify(file_name: str, caption: str, message_text: str) -> Detection:
@@ -288,6 +358,30 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
     # entry stays unresolved.
     display = _best_display_title(candidates) if candidates else chosen.title
 
+    # Audiobook author/title parsing: "Autor 1, Autor 2 - Titel" -> authors +
+    # clean book title. The book title becomes the primary search candidate and
+    # display title; authors feed the provider scoring/verification.
+    authors_parsed: list[str] = []
+    volume_parsed: Optional[int] = None
+    if audiobook_signal:
+        fn_base = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", file_name or "")
+        sources = [fn_base, caption or "", (message_text or "").split("\n", 1)[0]]
+        for src in sources:
+            a, t = _parse_author_title(src)
+            if a:
+                authors_parsed = a
+                book_title = _clean_book_title(t)
+                if book_title:
+                    display = book_title
+                    lowers = {c.lower() for c in candidates}
+                    if book_title.lower() not in lowers:
+                        candidates.insert(0, book_title)
+                break
+        for src in sources:
+            volume_parsed = _parse_volume(src)
+            if volume_parsed:
+                break
+
     return Detection(
         has_title=True,
         only_episode=False,
@@ -301,6 +395,8 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
         confidence=round(confidence, 3),
         title_source=chosen.source_field,
         search_titles=candidates,
+        authors=authors_parsed,
+        volume=volume_parsed,
     )
 
 

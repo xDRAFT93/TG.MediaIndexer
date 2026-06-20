@@ -46,7 +46,8 @@ class TMDbProvider(Provider):
         return mapping
 
     async def search(self, query: str, media_type: MediaType,
-                     year: Optional[int]) -> Optional[MediaMetadata]:
+                     year: Optional[int],
+                     hints: Optional[dict] = None) -> Optional[MediaMetadata]:
         if not self.enabled or not query:
             return None
         kind = "movie" if media_type == MediaType.FILM else "tv"
