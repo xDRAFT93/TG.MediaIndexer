@@ -67,6 +67,8 @@ async def handle_command(event, body: str) -> None:
         await _cmd_reindex(event)
     elif cmd in {"prune", "cleanup"}:
         await _cmd_prune(event)
+    elif cmd in {"tidy", "dropbad"}:
+        await _cmd_cleanup(event)
     else:
         await event.reply(f"Unknown command: {cmd}\n\n{_help_text()}")
 
@@ -81,6 +83,7 @@ def _help_text() -> str:
         f"{p}rebuild <query> - re-resolve & re-render a media by title\n"
         f"{p}reindex - re-render all entries with current display rules\n"
         f"{p}prune - remove dead source links; delete emptied entries\n"
+        f"{p}tidy - delete unresolved entries whose title is just an episode marker\n"
         f"{p}help - show this help"
     )
 
@@ -317,3 +320,40 @@ async def _cmd_prune(event) -> None:
         f"episodes deleted: {summary['episodes_deleted']}\n"
         f"dead releases removed: {summary['releases_removed']}"
     )
+
+
+async def _cmd_cleanup(event) -> None:
+    """Delete bogus standalone entries whose 'title' is really just an episode
+    marker ("1a", "100", "S1F1", "bd2", "10.1" …). These are leftovers from
+    before the detection fixes; only unresolved entries with very few releases
+    are removed, so real series are never touched."""
+    from ..healing.prune import _delete_media_fully
+    ids = await MediaRepository.all_ids()
+    removed = 0
+    for media_id in ids:
+        media = await MediaRepository.get(media_id)
+        if media is None or media.metadata_resolved:
+            continue
+        if not _looks_like_episode_marker(media.title):
+            continue
+        episodes = await EpisodeRepository.list_for_media(media_id)
+        if len(episodes) > 3:
+            continue  # too substantial to be a stray marker entry
+        await _delete_media_fully(event.client, media_id, episodes)
+        removed += 1
+    await event.reply(
+        f"Tidy: removed {removed} unresolved entry(ies) whose title was only an "
+        f"episode marker. Run .reindex afterwards to refresh the rest."
+    )
+
+
+def _looks_like_episode_marker(title: str) -> bool:
+    """True if a stored title is really just an episode marker, not a real title.
+    Uses the detector: a marker-only string classifies as episode-only (or yields
+    no title at all)."""
+    from ..detection.classifier import classify
+    t = (title or "").strip()
+    if not t:
+        return True
+    d = classify(t, "", "")
+    return d.only_episode or not d.has_title

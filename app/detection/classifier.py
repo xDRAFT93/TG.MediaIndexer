@@ -9,6 +9,8 @@ to the thread's active media (handled by the context manager).
 """
 from __future__ import annotations
 
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from typing import Optional
 
@@ -50,8 +52,61 @@ _TITLE_SOURCE_WEIGHT = {
     "message_text": 0.55,
 }
 
+# Mathematical sans-serif/serif bold & italic digits also fold via NFKC; this map
+# covers a few stylised forms NFKC misses (circled/parenthesised are handled by
+# NFKC, so only a safety net here).
+_DIGIT_FALLBACK = {
+    "\U0001D7CE": "0", "\U0001D7CF": "1", "\U0001D7D0": "2", "\U0001D7D1": "3",
+}
+
+
+def _normalize_unicode(s: str) -> str:
+    """Fold stylised Unicode to plain ASCII-ish text.
+
+    NFKC compatibility normalisation converts the mathematical alphanumeric
+    symbols Telegram channels love (bold/italic/sans-serif letters and digits)
+    and modifier letters (ᴴᴰ) to their plain equivalents, so the regex-based
+    marker/title detection works on styled posts.
+    """
+    if not s:
+        return s
+    s = unicodedata.normalize("NFKC", s)
+    if any(ch in _DIGIT_FALLBACK for ch in s):
+        s = "".join(_DIGIT_FALLBACK.get(ch, ch) for ch in s)
+    return s
+
+
+_EDGE_CHARS = " \t|-–—:·•.,/\\_"
+
+
+def _clean_title_edges(title: str) -> str:
+    """Strip separator characters left dangling at the title's edges, e.g.
+    "Peaky Blinders |" -> "Peaky Blinders"."""
+    return (title or "").strip(_EDGE_CHARS).strip()
+
+
+def _bare_number_episode(title: str) -> Optional[int]:
+    """If the whole title is just a number ("01", "100"), return it as an episode
+    number. Such "titles" otherwise hit the providers and produce a wrong match
+    and a bogus standalone entry. 4-digit years stay titles (a film could be a
+    year), everything else 1-4 digits is treated as an episode number."""
+    t = (title or "").strip()
+    if not re.fullmatch(r"\d{1,4}", t):
+        return None
+    n = int(t)
+    if len(t) == 4 and 1900 <= n <= 2099:
+        return None
+    return n if n > 0 else None
+
 
 def classify(file_name: str, caption: str, message_text: str) -> Detection:
+    # Fold "fancy" Unicode (mathematical bold/italic, modifier letters, full-width,
+    # bold digits …) to plain ASCII so markers and titles in styled Telegram posts
+    # are recognised, e.g. "𝗦𝗲𝗮𝘀𝗼𝗻 𝟮 ᴴᴰ 𝗘𝗽𝗶𝘀𝗼𝗱𝗲 𝟱" -> "Season 2 HD Episode 5".
+    file_name = _normalize_unicode(file_name)
+    caption = _normalize_unicode(caption)
+    message_text = _normalize_unicode(message_text)
+
     extractions: list[Extraction] = []
     if file_name:
         extractions.append(extract_from_filename(file_name))
@@ -116,6 +171,15 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
                 year = ex.year
                 break
 
+    # A file whose entire title is just a number ("01", "100") is an episode
+    # number, not a searchable title. Re-route it to episode-only binding so it
+    # joins the thread's series instead of producing a wrong provider match.
+    if chosen is not None and not episode.has_episode:
+        bare = _bare_number_episode(chosen.title)
+        if bare is not None:
+            episode = EpisodeInfo(season=episode.season, episode=bare)
+            chosen = None
+
     if chosen is None:
         # No usable series title. With an episode -> bind to the thread context.
         # An audiobook part ("Teil 2.mp3") binds to the active audiobook as an
@@ -158,7 +222,7 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
     # the post text ("eternal you - vom ende der endlichkeit").
     candidates: list[str] = []
     for ex in [chosen] + [e for e in extractions if e is not chosen]:
-        t = (ex.title or "").strip()
+        t = _clean_title_edges(ex.title or "")
         if t and t.lower() not in {c.lower() for c in candidates}:
             candidates.append(t)
     # Display title: the most descriptive candidate (more real words wins). This

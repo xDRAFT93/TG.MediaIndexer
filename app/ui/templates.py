@@ -21,7 +21,7 @@ import re as _re
 
 from typing import Optional
 
-from ..storage.models import Media
+from ..storage.models import Media, MediaType
 
 EMOJI_GENRES = "\U0001F3AC"   # 🎬
 EMOJI_RATING = "\u2B50"        # ⭐
@@ -144,7 +144,7 @@ def metadata_block(media: Media) -> str:
             lines.append(f"{EMOJI_RATING} Bewertung: {rating} ({media.votes} votes)")
         else:
             lines.append(f"{EMOJI_RATING} Bewertung: {rating}")
-    if media.release_date:
+    if media.release_date and media.media_type != MediaType.AUDIOBOOK:
         lines.append(f"{EMOJI_RELEASE} Erstver\u00f6ffentlichung: {esc(media.release_date)}")
     if media.runtime is not None:  # omit when unknown (fixes "None Minuten")
         lines.append(f"{EMOJI_RUNTIME} Laufzeit: {media.runtime} Minuten")

@@ -81,6 +81,8 @@ ANIME_HINT_RE = re.compile(
 SEASON_EPISODE_RES: list[re.Pattern] = [
     # S01E01 / S1.E1 / S01 E01, also when glued to the title ("LuciferS04E09").
     re.compile(r"(?i)S(?P<season>\d{1,2})[ ._-]*E(?P<episode>\d{1,3})(?![0-9])"),
+    # German short form S1F1 / S01F05 (Staffel x Folge y).
+    re.compile(r"(?i)\bS(?P<season>\d{1,2})[ ._-]*F(?P<episode>\d{1,3})(?![0-9])"),
     # 1x05 / 09x01 / 9X01 (case-insensitive x), not preceded by a digit/p/x
     re.compile(r"(?<![0-9pPxX])\b(?P<season>\d{1,2})[xX](?P<episode>\d{1,3})\b"),
     # season 1 episode 5 / staffel 1 folge 5 / season 1 ep 5
@@ -109,6 +111,19 @@ EPISODE_ONLY_RES: list[re.Pattern] = [
     re.compile(r"(?:^|[\]\)\s])[-–][ ]?(?P<episode>\d{1,3})(?:v\d)?(?=[ \[\(.]|$)"),
     # Leading bare episode number in list style: "16 - Title" / "16. Title".
     re.compile(r"^[\[\(]?(?P<episode>\d{1,3})[\]\)]?[ ._]*[-–.][ ._]+(?=\S)"),
+    # Leading "10.1" / "01.2" = episode 10 / 1 with a SUB-part (one digit after the
+    # dot). Distinct from the SxxEyy "04.01" form, which has two digits after the
+    # dot and is matched earlier. The integer part is the episode number.
+    re.compile(r"^(?P<episode>\d{1,3})\.\d(?!\d)"),
+    # Leading "1a" / "2b" / "10c" = episode number with a part letter. Anchored to
+    # the end so a title like "2B Movie" is NOT misread as episode 2.
+    re.compile(r"(?i)^(?P<episode>\d{1,3})[a-e]$"),
+    # Leading "01_Titel" / "10_Titel" = episode number then underscore then title.
+    re.compile(r"^(?P<episode>\d{1,3})_(?=\D)"),
+    # Disc/opening/ending/special markers: bd1, ed2, op1, sp3, ova2 (treated as
+    # episode numbers so they bind to the series instead of being searched as a
+    # bogus title).
+    re.compile(r"(?i)^(?:bd|ed|op|sp|ova|oad|nced|ncop)[ ._-]?(?P<episode>\d{1,3})(?![0-9])"),
     # Leading ZERO-PADDED number ("044 Titel", "007 ..."). A leading zero marks a
     # track/episode number, so this is safe where a bare "300" is not. int()
     # collapses the padding ("044" -> 44).

@@ -422,3 +422,35 @@ deren Dateien ausschließlich Archive sind.
 Vorschau, Promo, Sample, Snippet und Ausschnitt im Post-Text als Trailer erkannt
 und ignoriert. Über `TRAILER_KEYWORDS` (komma-separiert) lassen sich weitere
 Begriffe ergänzen.
+
+## Stilisierte Posts, weitere Episodenformate & bare Zahlen (dieser Stand)
+
+**Unicode-Normalisierung (NFKC):** Stilisierte Telegram-Posts mit mathematischer
+Fettschrift/Kursive und Modifier-Buchstaben (z. B. `𝗦𝗲𝗮𝘀𝗼𝗻 𝟮 ᴴᴰ 𝗘𝗽𝗶𝘀𝗼𝗱𝗲 𝟱`)
+werden vor der Erkennung auf normales ASCII gefaltet (`Season 2 HD Episode 5`).
+Dadurch werden Marker **und** Serientitel erkannt — das Peaky-Blinders-Beispiel
+ergibt jetzt korrekt `Peaky Blinders` S02E05/E06 und beide Folgen landen in
+**einem** Eintrag statt je einem eigenen. Überflüssige Trennzeichen am Titelrand
+(`Peaky Blinders |`) werden entfernt.
+
+**Mehr Episodenformate erkannt:** `1a/1b/2a` (Buchstaben-Teil), `10.1/01.2`
+(Episode mit Unter-Teil, eine Stelle nach dem Punkt — abgegrenzt von der
+`S04E01`-Form mit zwei Stellen), `S1F1/S01F05` (deutsche Staffel/Folge-Kurzform),
+`bd1/ed2/op1/sp3/ova2` (Disc/Opening/Ending/Special), `01_Titel`, `1. Titel`. Alle
+binden als Episode an die Serie im Thread, statt einzelne Einträge zu erzeugen.
+
+**Bare Zahlen als Episoden:** Dateinamen, die nur aus einer Zahl bestehen
+(`01`, `100`), werden als **Episodennummer** behandelt statt als Titel gesucht
+(eine bloße Zahl liefert sonst falsche Provider-Treffer und je einen Müll-Eintrag).
+Vierstellige Jahreszahlen (`1917`, `2024`) bleiben Titel.
+
+**Hörbücher:** Die Zeile „Erstveröffentlichung" wird bei Hörbüchern nicht mehr
+angezeigt.
+
+### Nachträgliche Korrektur
+- `.reindex` rendert alle Einträge neu — entfernt damit u. a. die
+  „Erstveröffentlichung"-Zeile bei bestehenden Hörbüchern.
+- **`.tidy`** (Alias `.dropbad`) löscht unaufgelöste Einträge, deren „Titel" in
+  Wahrheit nur ein Episoden-Marker ist (`1a`, `100`, `S1F1`, `bd2`, `10.1` …) und
+  die höchstens wenige Releases haben — die Altlasten falscher Einzel-Einträge.
+  Echte Serien bleiben unangetastet.
