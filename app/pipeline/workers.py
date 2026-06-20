@@ -349,6 +349,7 @@ async def _create_media(decision, det: Detection,
         hints = {
             "authors": list(getattr(det, "authors", None) or []),
             "volume": getattr(det, "volume", None),
+            "series": getattr(det, "series", "") or "",
             "language": settings.books_language,
         }
 

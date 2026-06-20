@@ -42,6 +42,7 @@ class Detection:
     # "… Band 3") used to score and verify the provider match.
     authors: list[str] = field(default_factory=list)
     volume: Optional[int] = None
+    series: str = ""
 
     @property
     def provider_query(self) -> str:
@@ -197,16 +198,75 @@ def _looks_like_author_list(s: str) -> bool:
 
 
 def _parse_author_title(text: str) -> tuple[list[str], str]:
-    """Split 'Author1, Author2 - Title' into (authors, title). Returns ([], text)
-    when the leading part is not name-like."""
-    parts = _AUTHOR_HYPHEN_RE.split(text or "", maxsplit=1)
-    if len(parts) != 2:
-        return [], (text or "")
-    left, right = parts[0].strip(), parts[1].strip()
-    if not _looks_like_author_list(left):
-        return [], (text or "")
-    authors = [p.strip() for p in left.split(",") if p.strip()]
-    return authors, right
+    authors, title, _series, _vol = _parse_audiobook_meta(text)
+    return authors, title
+
+
+_SERIES_KW_RE = re.compile(
+    r"\b(reihe|zyklus|trilogie|tetralogie|serie|saga|sammelband|chronik|chroniken|edition)\b",
+    re.IGNORECASE)
+_SERIES_STRIP_RE = re.compile(
+    r"\b(?:band|teil|vol|volume|buch|book|sammelband|folge|nr)\.?\s*\d{1,3}\b", re.IGNORECASE)
+
+
+def _series_segment(seg: str) -> tuple[Optional[str], Optional[int]]:
+    """If a ' - ' segment denotes a series/volume ('Sehnsuchtswald-Reihe 01',
+    'Marseille-Trilogie, Band 3'), return (series_name, volume); else (None, None)."""
+    has_kw = bool(_SERIES_KW_RE.search(seg))
+    vol = _parse_volume(seg)
+    m = re.search(r"\b(\d{1,3})\b\s*$", seg.strip())
+    trailing = int(m.group(1)) if m else None
+    if not has_kw and vol is None:
+        return None, None
+    volume = vol if vol is not None else trailing
+    name = _AB_QUALIFIER_RE.sub("", seg)
+    name = _SERIES_STRIP_RE.sub("", name)
+    name = re.sub(r"\b\d{1,3}\b\s*$", "", name)
+    name = re.sub(r"[,;]", " ", name)
+    name = re.sub(r"\s+", " ", name).strip(" -,")
+    return name, volume
+
+
+def _parse_audiobook_meta(text: str) -> tuple[list[str], str, str, Optional[int]]:
+    """Parse 'Author[, Author] - [Series Vol -] Title [- …] (Qualifier)' into
+    (authors, title, series, volume). Handles comma-separated authors and
+    hyphen-separated multiple authors ('Author1 - Author2 - Title'), and keeps a
+    'Series - Volume' string from being misread as an author/title."""
+    segs = [s.strip() for s in _AUTHOR_HYPHEN_RE.split(text or "") if s.strip()]
+    if len(segs) < 2:
+        return [], _clean_book_title(text or ""), "", _parse_volume(text)
+
+    authors: list[str] = []
+    i = 0
+    while i < len(segs) - 1:
+        seg = segs[i]
+        if not _looks_like_author_list(seg):
+            break
+        # A 2nd+ leading author must be a FULL name (>=2 words per part) so a
+        # single-word title ("Solea") is not swallowed as an author.
+        if i >= 1 and not all(len(p.split()) >= 2 for p in seg.split(",") if p.strip()):
+            break
+        authors.extend(p.strip() for p in seg.split(",") if p.strip())
+        i += 1
+    if not authors:
+        return [], _clean_book_title(text or ""), "", _parse_volume(text)
+
+    rest = segs[i:]
+    series, volume = "", None
+    title_parts: list[str] = []
+    for seg in rest:
+        s_name, s_vol = _series_segment(seg)
+        if s_name is not None:
+            if not series and s_name:
+                series = s_name
+            if volume is None and s_vol is not None:
+                volume = s_vol
+        else:
+            title_parts.append(seg)
+    title = _clean_book_title(title_parts[0]) if title_parts else _clean_book_title(rest[0])
+    if volume is None:
+        volume = _parse_volume(text)
+    return authors, title, series, volume
 
 
 def _parse_volume(text: str) -> Optional[int]:
@@ -308,6 +368,17 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
             episode = EpisodeInfo(season=episode.season, episode=bare)
             chosen = None
 
+    # Bare-number FILE NAME ("1.mp3", "100.m4b"): the extractor sometimes drops a
+    # lone number (it can look like an audio-channel token such as 2.0/5.1), so
+    # derive it straight from the file name when no title/episode was found. Such
+    # numbered files are parts that must bind to the thread's active media.
+    if not episode.has_episode and (chosen is None or not (chosen.title or "").strip()):
+        fn_base = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", file_name or "").strip()
+        bare_fn = _bare_number_episode(fn_base)
+        if bare_fn is not None:
+            episode = EpisodeInfo(season=episode.season, episode=bare_fn)
+            chosen = None
+
     if chosen is None:
         # No usable series title. With an episode -> bind to the thread context.
         # An audiobook part ("Teil 2.mp3") binds to the active audiobook as an
@@ -358,29 +429,37 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
     # entry stays unresolved.
     display = _best_display_title(candidates) if candidates else chosen.title
 
-    # Audiobook author/title parsing: "Autor 1, Autor 2 - Titel" -> authors +
-    # clean book title. The book title becomes the primary search candidate and
-    # display title; authors feed the provider scoring/verification.
+    # Audiobook author/title parsing: "Autor 1, Autor 2 - Titel" or
+    # "Autor - Serie Band NN - Titel" -> authors + clean book title + series +
+    # volume. Tried on the post text first (it carries the ' - ' structure), then
+    # the file name. The book title becomes the primary search candidate; an
+    # "authors + title" query is added so Audible's keyword search resolves an
+    # ASIN even from a cryptic file name.
     authors_parsed: list[str] = []
+    series_parsed = ""
     volume_parsed: Optional[int] = None
     if audiobook_signal:
         fn_base = re.sub(r"\.[A-Za-z0-9]{1,5}$", "", file_name or "")
-        sources = [fn_base, caption or "", (message_text or "").split("\n", 1)[0]]
+        sources = [caption or "", (message_text or "").split("\n", 1)[0], fn_base]
         for src in sources:
-            a, t = _parse_author_title(src)
+            a, t, s, v = _parse_audiobook_meta(src)
             if a:
-                authors_parsed = a
-                book_title = _clean_book_title(t)
+                authors_parsed, series_parsed, volume_parsed = a, s, v
+                book_title = t or display
                 if book_title:
                     display = book_title
+                    queries = [book_title, f"{' '.join(a)} {book_title}".strip()]
                     lowers = {c.lower() for c in candidates}
-                    if book_title.lower() not in lowers:
-                        candidates.insert(0, book_title)
+                    for q in reversed(queries):
+                        if q and q.lower() not in lowers:
+                            candidates.insert(0, q)
+                            lowers.add(q.lower())
                 break
-        for src in sources:
-            volume_parsed = _parse_volume(src)
-            if volume_parsed:
-                break
+        if volume_parsed is None:
+            for src in sources:
+                volume_parsed = _parse_volume(src)
+                if volume_parsed:
+                    break
 
     return Detection(
         has_title=True,
@@ -397,6 +476,7 @@ def classify(file_name: str, caption: str, message_text: str) -> Detection:
         search_titles=candidates,
         authors=authors_parsed,
         volume=volume_parsed,
+        series=series_parsed,
     )
 
 

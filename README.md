@@ -521,3 +521,32 @@ ASIN** gespeichert.
 
 **Korrekturbefehle:** `.audverify` und `.repair` nutzen diese Regeln vollständig
 (Autoren/Sprecher/Sprache als Hinweise, gespeicherte ASIN als Hauptquelle).
+
+## Audible als einzige Hörbuch-Datenquelle + besseres Parsing (dieser Stand)
+
+**Nur Audible/Audnexus-Daten:** Der Bug, dass bei fehlendem Audible-Treffer Daten
+von DNB/Open Library im Zielthred landeten, ist behoben. Audnexus/Audible ist die
+**einzige** Datenquelle für Hörbücher (Text **und** Cover). Google Books, DNB und
+Open Library dienen ausschließlich der **Identifikation**: liefert Audible direkt
+nichts, holen sie einen sauberen Titel/Autor, mit dem **Audible erneut** gesucht
+wird. Findet Audible auch dann nichts, bleibt der Eintrag unaufgelöst — es werden
+**niemals** Fremddaten gepostet.
+
+**ASIN-Ermittlung:** Der Bot ermittelt die ASIN selbst, indem er Audible mit dem
+aus dem **Dateinamen** geparsten Autor+Titel durchsucht (Fallback: **Post-Text**
+aus dem Quellthread). Eine einmal gefundene ASIN wird gespeichert und künftig
+**direkt** bei Audnexus abgefragt.
+
+**Komplexe Dateinamen:** „Autor - Serie Band NN - Titel" und „Autor - Autor -
+Titel" werden korrekt zerlegt — inkl. Autorennamen mit Bindestrich
+(„Jean-Claude Izzo"), kommagetrennter Mehrfachautoren und Serien-/Bandangaben
+(„Sehnsuchtswald-Reihe 01", „Marseille-Trilogie, Band 3"). Titel, Autoren, Serie
+und Band fließen ins Matching ein; eine „authors + title"-Suchanfrage wird
+ergänzt, damit Audible auch aus kryptischen Dateinamen eine ASIN findet.
+
+**Nummerierte Teile:** Dateinamen, die nur aus einer Zahl bestehen (1 … 100),
+binden als **Teile (Releases)** an das zuletzt per Bild+Titel angekündigte
+Hörbuch im Thread (statt je Datei ein eigener Eintrag) — auch reine „1"/„2"/„5",
+die der Extractor sonst verworfen hat.
+
+Diese Regeln gelten auch in den Korrekturbefehlen `.audverify` und `.repair`.

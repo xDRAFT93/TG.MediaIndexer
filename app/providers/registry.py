@@ -80,10 +80,13 @@ class ProviderRegistry:
             MediaType.ANIME: [jikan, anilist, kitsu, tmdb, omdb],
             MediaType.SERIES: [tmdb, omdb],
             MediaType.FILM: [tmdb, omdb],
-            # Audnexus (ASIN) first, then title-searchable book sources, DNB for
-            # the German bias before the generic Open Library fallback.
-            MediaType.AUDIOBOOK: [audnexus, googlebooks, dnb, openlibrary],
+            # Audnexus/Audible is the ONLY data source for audiobooks (text AND
+            # cover). The book catalogues below never supply postable data.
+            MediaType.AUDIOBOOK: [audnexus],
         }
+        # Identification-only helpers: used solely to find a cleaner title/author
+        # so Audible can be re-searched. Their metadata is never returned/posted.
+        self._book_identifiers: list[Provider] = [googlebooks, dnb, openlibrary]
 
     def chain_for(self, media_type: MediaType) -> list[Provider]:
         return self._chains.get(media_type, [tmdb_first(self._all)])
@@ -119,15 +122,15 @@ class ProviderRegistry:
         if not query:
             return ResolveResult(None, "", 0.0, False)
 
+        if media_type == MediaType.AUDIOBOOK:
+            return await self._resolve_audiobook(query, year, hints)
+
         threshold = settings.provider_match_threshold
         if media_type == MediaType.ANIME:
             threshold = settings.anime_match_threshold
-        elif media_type == MediaType.AUDIOBOOK:
-            threshold = settings.audiobook_match_threshold
         best: Optional[MediaMetadata] = None
         best_provider = ""
         best_score = -1.0
-        h_authors = (hints or {}).get("authors") or []
 
         for provider in self.chain_for(media_type):
             if not provider.enabled or not provider.supports(media_type):
@@ -139,19 +142,6 @@ class ProviderRegistry:
                 continue
             if meta is None or not meta.title:
                 continue
-            if media_type == MediaType.AUDIOBOOK:
-                score, title_score, a_ov = audiobook_score(query, meta, hints)
-                # Strict accept: title must clear the threshold AND, when authors
-                # are known, at least one author token must match. This is what
-                # prevents storing a wrong book / wrong ASIN.
-                accept = title_score >= threshold and (not h_authors or a_ov >= 0.34)
-                if accept:
-                    result = ResolveResult(meta, provider.name, score, True)
-                    return await self._enrich_audiobook(result, query, year, hints)
-                if score > best_score:
-                    best, best_provider, best_score = meta, provider.name, score
-                continue
-
             score = title_similarity(query, meta.title)
             if meta.original_title:
                 score = max(score, title_similarity(query, meta.original_title))
@@ -160,12 +150,10 @@ class ProviderRegistry:
             if score > best_score:
                 best, best_provider, best_score = meta, provider.name, score
 
-        # For anime AND audiobooks a weak "best" guess is more harmful than no
-        # data at all (short anime titles collide; books collide on author), so a
-        # below-threshold best is discarded and the entry stays unresolved. For
-        # film/series a partial best is kept (unresolved) as a hint.
-        strict = media_type in (MediaType.ANIME, MediaType.AUDIOBOOK)
-        if best is not None and not strict:
+        # For anime a weak "best" guess is more harmful than no data, so a
+        # below-threshold best is discarded. For film/series a partial best is
+        # kept (unresolved) as a hint.
+        if best is not None and media_type != MediaType.ANIME:
             log.info("No strong match for %r (best %.0f via %s); keeping partial.",
                      query, best_score, best_provider)
             return ResolveResult(best, best_provider, best_score, False)
@@ -174,39 +162,82 @@ class ProviderRegistry:
                      query, best_score, best_provider)
         return ResolveResult(None, "", 0.0, False)
 
-    async def _enrich_audiobook(self, result: ResolveResult, query: str,
-                                year: Optional[int],
-                                hints: Optional[dict]) -> ResolveResult:
-        """Audnexus/Audible stays the authoritative source; the other book
-        providers only FILL gaps (overview, cover, genres) and never override the
-        ASIN/title/authors. Used only for an accepted audiobook match."""
-        meta = result.metadata
-        if meta is None or result.provider != "audnexus":
-            return result
-        if meta.overview and meta.poster_url and meta.genres:
-            return result  # already complete
-        for provider in self.chain_for(MediaType.AUDIOBOOK):
-            if provider.name == "audnexus" or not provider.enabled:
-                continue
-            if meta.overview and meta.poster_url and meta.genres:
-                break
+    async def _resolve_audiobook(self, query: str, year: Optional[int],
+                                 hints: Optional[dict]) -> ResolveResult:
+        """Resolve an audiobook with Audnexus/Audible as the SOLE data source.
+
+        Google Books / DNB / Open Library are consulted only to obtain a cleaner
+        title+author with which Audible is searched again — their metadata is
+        never returned, so no foreign data (or cover) is ever posted. Nothing is
+        accepted unless Audible/Audnexus confirms it with a strong title match
+        and (when authors are known) a matching author, so no wrong ASIN sticks.
+        """
+        threshold = settings.audiobook_match_threshold
+        h_authors = (hints or {}).get("authors") or []
+        audnexus = self._provider("audnexus")
+        if audnexus is None:
+            return ResolveResult(None, "", 0.0, False)
+
+        best_partial: Optional[tuple[MediaMetadata, float]] = None
+
+        async def try_audnexus(q: str, h: Optional[dict]) -> Optional[ResolveResult]:
+            nonlocal best_partial
             try:
-                extra = await self._cached_search(provider, query,
-                                                  MediaType.AUDIOBOOK, year, hints)
+                meta = await self._cached_search(audnexus, q, MediaType.AUDIOBOOK, year, h)
+            except Exception as exc:  # pragma: no cover - defensive
+                log.warning("Audnexus errored on %r: %s", q, exc)
+                return None
+            if meta is None or not meta.title:
+                return None
+            score, title_score, a_ov = audiobook_score(q, meta, h)
+            ha = (h or {}).get("authors") or []
+            if title_score >= threshold and (not ha or a_ov >= 0.34):
+                return ResolveResult(meta, "audnexus", score, True)
+            if best_partial is None or score > best_partial[1]:
+                best_partial = (meta, score)
+            return None
+
+        # 1) Direct Audible/Audnexus search with the detected query.
+        hit = await try_audnexus(query, hints)
+        if hit:
+            return hit
+
+        # 2) Identification pass: ask the book catalogues for a canonical
+        #    title/author, then re-search Audible with that refined query.
+        seen = {query.lower()}
+        for idp in self._book_identifiers:
+            if not idp.enabled or not idp.supports(MediaType.AUDIOBOOK):
+                continue
+            try:
+                ident = await self._cached_search(idp, query, MediaType.AUDIOBOOK, year, hints)
             except Exception:  # pragma: no cover - defensive
                 continue
-            if extra is None:
+            if ident is None or not ident.title:
                 continue
-            # Verification: only enrich from a source that agrees on the title.
-            if title_similarity(meta.title, extra.title) < 80:
-                continue
-            if not meta.overview and extra.overview:
-                meta.overview = extra.overview
-            if not meta.poster_url and extra.poster_url:
-                meta.poster_url = extra.poster_url
-            if not meta.genres and extra.genres:
-                meta.genres = list(extra.genres)
-        return result
+            authors = h_authors or list(getattr(ident, "authors", []) or [])
+            refined_variants = []
+            if authors:
+                refined_variants.append(f"{' '.join(authors)} {ident.title}")
+            refined_variants.append(ident.title)
+            ref_hints = {**(hints or {}), "authors": authors}
+            for rq in refined_variants:
+                if rq.lower() in seen:
+                    continue
+                seen.add(rq.lower())
+                hit = await try_audnexus(rq, ref_hints)
+                if hit:
+                    log.info("Audiobook resolved via %s identification -> Audible %r.",
+                             idp.name, rq)
+                    return hit
+
+        log.info("Audiobook %r: no confident Audible match — left unresolved.", query)
+        return ResolveResult(None, "", 0.0, False)
+
+    def _provider(self, name: str) -> Optional[Provider]:
+        for p in self._all:
+            if p.name == name:
+                return p
+        return None
 
     async def aclose(self) -> None:
         await self.client.aclose()
