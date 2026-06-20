@@ -150,7 +150,10 @@ async def reverify_audiobooks(enqueue=None) -> dict:
     matching. A wrong match (right author, wrong book) is replaced with the
     correct one if it can now be resolved, or cleared back to unresolved so the
     target post stops showing the wrong book. Entries without stored query
-    aliases are left untouched (cannot be re-queried reliably)."""
+    aliases are left untouched (cannot be re-queried reliably).
+
+    ``enqueue`` is an async callable (e.g. ``update_queue.put``) awaited per
+    changed media so a bounded queue applies backpressure instead of raising."""
     summary = {"checked": 0, "updated": 0, "cleared": 0, "kept": 0}
     if _registry is None:
         return summary
@@ -207,7 +210,7 @@ async def reverify_audiobooks(enqueue=None) -> dict:
             summary["kept"] += 1
 
         if enqueue:
-            enqueue(media_id)
+            await enqueue(media_id)
     log.info("Audiobook re-verify: %s", summary)
     return summary
 

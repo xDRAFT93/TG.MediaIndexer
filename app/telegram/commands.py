@@ -298,7 +298,7 @@ async def _cmd_prune(event) -> None:
     delete entries whose sources have all disappeared."""
     from ..healing.prune import run_prune
     await event.reply("Pruning dead source links — checking every entry, this may take a while ...")
-    summary = await run_prune(event.client, update_queue.put_nowait)
+    summary = await run_prune(event.client, update_queue.put)
     await event.reply(
         "Prune done.\n"
         f"entries checked: {summary['checked']}\n"
@@ -339,7 +339,7 @@ async def _cmd_audverify(event) -> None:
     or clearing wrong ones so the target thread reflects correct books."""
     from ..healing.self_heal import reverify_audiobooks
     await event.reply("Re-verifying audiobooks with precise matching — checking every book entry ...")
-    s = await reverify_audiobooks(update_queue.put_nowait)
+    s = await reverify_audiobooks(update_queue.put)
     await event.reply(
         "Audiobook re-verify done.\n"
         f"checked: {s['checked']}\n"

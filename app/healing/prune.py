@@ -17,7 +17,7 @@ failure can never wipe a live entry.
 """
 from __future__ import annotations
 
-from typing import Callable, Iterable, Optional
+from typing import Iterable, Optional
 
 from ..logging_setup import get_logger
 from ..storage.repositories import (
@@ -133,11 +133,13 @@ async def _live_pairs(client, pairs: set) -> tuple[set, set]:
     return live, checked
 
 
-async def run_prune(client, enqueue: Callable[[str], object]) -> dict:
+async def run_prune(client, enqueue) -> dict:
     """Walk the whole catalog, drop dead links, delete emptied entries.
 
-    ``enqueue`` is called with each surviving-but-changed media id so the update
-    worker re-renders it with the pruned data.
+    ``enqueue`` is an async callable (e.g. ``update_queue.put``) awaited with
+    each surviving-but-changed media id so the update worker re-renders it; using
+    the awaitable ``put`` applies backpressure on a bounded queue instead of
+    raising ``QueueFull``.
     """
     summary = {"checked": 0, "media_pruned": 0, "media_deleted": 0,
                "episodes_deleted": 0, "releases_removed": 0}
@@ -186,7 +188,7 @@ async def run_prune(client, enqueue: Callable[[str], object]) -> dict:
             await EpisodeRepository.delete(eid)
             summary["episodes_deleted"] += 1
         summary["media_pruned"] += 1
-        enqueue(media_id)
+        await enqueue(media_id)
 
     log.info("Prune done: %s", summary)
     return summary
